@@ -27,16 +27,20 @@ Usage:
     python3 cheap_bench.py --model gemma4:12b google/gemma-4-31b-it
     python3 cheap_bench.py --no-cost        # skip cost reporting
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import statistics
 import sys
 import time
-from dataclasses import dataclass, asdict
 from pathlib import Path
+
+# vs-soft-allow — CANDIDATES rows are intentionally tabular (model | provider |
+# pricing) and exceed the 100-char line cap when listing every field on one
+# line. Splitting across lines breaks the visual "diff candidates" comparison.
+
 
 # add parent dir so we can import cheap_llm
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -60,7 +64,7 @@ CANDIDATES: list[dict] = [
     # Local (T1) — gemma4:12b. Free, private, fast. Validated as primary by
     # cheap_llm.py R4 head-to-head (avg 84.2 on 5 preprocessor tasks) and
     # ousted the previous qwen3.5:9b fallback (deleted 2026-06-19).
-    {"id": "gemma4:12b",                  "kind": "local",     "provider": "ollama",     "input": 0.0, "output": 0.0},
+    {"id": "gemma4:12b", "kind": "local", "provider": "ollama", "input": 0.0, "output": 0.0},
     # T2 cloud — pricing per OpenRouter public listing (NOT usage.cost, which
     # reports $0 for gemini/promo models). deepseek is BYOK = genuinely $0.
     # Pruned from this list (see DO-NOT-RE-TEST ledger in
@@ -68,11 +72,47 @@ CANDIDATES: list[dict] = [
     # gpt-4.1-nano (old 4.1 gen, deprecation risk despite high score),
     # qwen3.6-flash (reasoning tax). Also rejected outright: gpt-5-nano +
     # glm-4.7-flash (reasoning-only, content="" on short tasks).
-    {"id": "inclusionai/ling-2.6-flash",  "kind": "cloud",     "provider": "openrouter", "env": "OPENROUTER_API_KEY", "input": 0.01,  "output": 0.03},
-    {"id": "inclusionai/ling-2.6-1t",     "kind": "cloud",     "provider": "openrouter", "env": "OPENROUTER_API_KEY", "input": 0.075, "output": 0.625},
-    {"id": "google/gemini-3.1-flash-lite","kind": "cloud",     "provider": "openrouter", "env": "OPENROUTER_API_KEY", "input": 0.25,  "output": 1.50},
-    {"id": "openai/gpt-5.4-nano",         "kind": "cloud",     "provider": "openrouter", "env": "OPENROUTER_API_KEY", "input": 0.20,  "output": 1.25},
-    {"id": "deepseek/deepseek-v4-flash",  "kind": "cloud",     "provider": "openrouter", "env": "OPENROUTER_API_KEY", "input": 0.14,  "output": 0.28, "byok": True},
+    {
+        "id": "inclusionai/ling-2.6-flash",
+        "kind": "cloud",
+        "provider": "openrouter",
+        "env": "OPENROUTER_API_KEY",
+        "input": 0.01,
+        "output": 0.03,
+    },
+    {
+        "id": "inclusionai/ling-2.6-1t",
+        "kind": "cloud",
+        "provider": "openrouter",
+        "env": "OPENROUTER_API_KEY",
+        "input": 0.075,
+        "output": 0.625,
+    },
+    {
+        "id": "google/gemini-3.1-flash-lite",
+        "kind": "cloud",
+        "provider": "openrouter",
+        "env": "OPENROUTER_API_KEY",
+        "input": 0.25,
+        "output": 1.50,
+    },
+    {
+        "id": "openai/gpt-5.4-nano",
+        "kind": "cloud",
+        "provider": "openrouter",
+        "env": "OPENROUTER_API_KEY",
+        "input": 0.20,
+        "output": 1.25,
+    },
+    {
+        "id": "deepseek/deepseek-v4-flash",
+        "kind": "cloud",
+        "provider": "openrouter",
+        "env": "OPENROUTER_API_KEY",
+        "input": 0.14,
+        "output": 0.28,
+        "byok": True,
+    },
 ]
 
 # --- Task set --------------------------------------------------------------
@@ -85,7 +125,7 @@ TASKS: list[dict] = [
         "system": (
             "You classify developer prompts into one of: "
             "trivial, lookup, code-edit, architecture, security, debug. "
-            'Reply with JSON only — no prose, no code fences. Use field name '
+            "Reply with JSON only — no prose, no code fences. Use field name "
             '"category" (not "classification" or "label").'
         ),
         "prompt": (
@@ -123,12 +163,11 @@ diff --git a/src/auth/middleware.ts b/src/auth/middleware.ts
     {
         "name": "error_classify",
         "system": (
-            "You classify error messages. Reply with JSON only: "
-            "{system, cause, fix, confidence}."
+            "You classify error messages. Reply with JSON only: {system, cause, fix, confidence}."
         ),
         "prompt": (
             "n8n workflow failing with: 'Request failed with status code 401 "
-            "and message: {\\\"error\\\":\\\"unauthorized\\\"}'. The Dataverse "
+            'and message: {\\"error\\":\\"unauthorized\\"}\'. The Dataverse '
             "node was working yesterday."
         ),
         "schema": ["system", "cause", "fix", "confidence"],
@@ -169,9 +208,12 @@ Optional deps: ripgrep (for --search)
 
 
 # --- cheap_llm client (inline to keep benchmark self-contained) ----------
-# Will be extracted to its own module after benchmark validates the design.
-import urllib.error
-import urllib.request
+# Self-contained on purpose — the benchmark measures cheap_llm.py by
+# exercising the same wire shape without importing it (otherwise we can't
+# measure the module from inside itself). urllib imports sit below the
+# rationale comment intentionally.
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
 
 
 def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> dict:
@@ -199,9 +241,15 @@ def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> d
     }
 
 
-def call_openai_compat(base_url: str, api_key: str, model: str,
-                       system: str, prompt: str, timeout: float = 30.0,
-                       extra: dict | None = None) -> dict:
+def call_openai_compat(
+    base_url: str,
+    api_key: str,
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float = 30.0,
+    extra: dict | None = None,
+) -> dict:
     """Call any OpenAI-compatible chat-completions endpoint."""
     payload = {
         "model": model,
@@ -241,7 +289,7 @@ def call_openai_compat(base_url: str, api_key: str, model: str,
 
 PROVIDER_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
-    "deepinfra":  "https://api.deepinfra.com/v1/openai",
+    "deepinfra": "https://api.deepinfra.com/v1/openai",
 }
 
 
@@ -254,13 +302,25 @@ def call_candidate(cand: dict, task: dict, timeout: float) -> dict:
         else:
             env = cand.get("env")
             if env and not os.environ.get(env):
-                return {"error": f"missing env {env}", "text": "", "latency": 0,
-                        "input_tokens": 0, "output_tokens": 0, "cost": 0}
+                return {
+                    "error": f"missing env {env}",
+                    "text": "",
+                    "latency": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost": 0,
+                }
             api_key = os.environ[env]
             base_url = PROVIDER_URLS[cand["provider"]]
-            out = call_openai_compat(base_url, api_key, cand["id"],
-                                     task["system"], task["prompt"], timeout=timeout,
-                                     extra=cand.get("extra"))
+            out = call_openai_compat(
+                base_url,
+                api_key,
+                cand["id"],
+                task["system"],
+                task["prompt"],
+                timeout=timeout,
+                extra=cand.get("extra"),
+            )
         inp = out.get("input_tokens", 0)
         out_t = out.get("output_tokens", 0)
         # Trust the PUBLIC LISTING price, not usage.cost — OpenRouter returns
@@ -275,11 +335,18 @@ def call_candidate(cand: dict, task: dict, timeout: float) -> dict:
             out["cost"] = (inp * cand["input"] + out_t * cand["output"]) / 1_000_000
         return out
     except Exception as e:
-        return {"error": f"{type(e).__name__}: {e}", "text": "", "latency": 0,
-                "input_tokens": 0, "output_tokens": 0, "cost": 0}
+        return {
+            "error": f"{type(e).__name__}: {e}",
+            "text": "",
+            "latency": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost": 0,
+        }
 
 
 # --- Scoring ---------------------------------------------------------------
+
 
 def try_parse_json(text: str) -> dict | None:
     """Extract JSON from model output. Tolerate ```json fences, leading prose."""
@@ -288,11 +355,11 @@ def try_parse_json(text: str) -> dict | None:
     if text.startswith("```"):
         lines = text.splitlines()
         # drop first line (```json or ```) and last ```
-        lines = [l for l in lines if not l.strip().startswith("```")]
+        lines = [line for line in lines if not line.strip().startswith("```")]
         text = "\n".join(lines).strip()
     # first { ... last }
     if "{" in text and "}" in text:
-        text = text[text.find("{"): text.rfind("}") + 1]
+        text = text[text.find("{") : text.rfind("}") + 1]
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -368,8 +435,10 @@ def _content_quality(task: dict, parsed: dict) -> int:
             score += 5
         if 5 <= len(sub) <= 70:
             score += 5
-        if any(sub.lower().startswith(p) for p in ("feat:", "fix:", "chore:", "docs:",
-                                                     "test:", "refactor:", "build:", "perf:")):
+        if any(
+            sub.lower().startswith(p)
+            for p in ("feat:", "fix:", "chore:", "docs:", "test:", "refactor:", "build:", "perf:")
+        ):
             score += 5
         return min(score, 40)
     if name == "error_classify":
@@ -391,8 +460,10 @@ def _content_quality(task: dict, parsed: dict) -> int:
             score += 12
         if "node" in str(parsed.get("deps", "")).lower():
             score += 8
-        if "experimental" in str(parsed.get("warnings", "")).lower() or \
-           "streaming" in str(parsed.get("warnings", "")).lower():
+        if (
+            "experimental" in str(parsed.get("warnings", "")).lower()
+            or "streaming" in str(parsed.get("warnings", "")).lower()
+        ):
             score += 8
         return min(score, 40)
     if name == "diff_review":
@@ -413,14 +484,13 @@ def _content_quality(task: dict, parsed: dict) -> int:
 
 # --- Main loop -------------------------------------------------------------
 
-def run_benchmark(model_filter: set[str] | None = None,
-                  task_filter: set[str] | None = None,
-                  timeout: float = 30.0) -> dict:
+
+def run_benchmark(
+    model_filter: set[str] | None = None, task_filter: set[str] | None = None, timeout: float = 30.0
+) -> dict:
     results: list[dict] = []
-    candidates = [c for c in CANDIDATES
-                  if model_filter is None or c["id"] in model_filter]
-    tasks = [t for t in TASKS
-             if task_filter is None or t["name"] in task_filter]
+    candidates = [c for c in CANDIDATES if model_filter is None or c["id"] in model_filter]
+    tasks = [t for t in TASKS if task_filter is None or t["name"] in task_filter]
 
     for task in tasks:
         for cand in candidates:
@@ -428,23 +498,27 @@ def run_benchmark(model_filter: set[str] | None = None,
             sys.stdout.flush()
             raw = call_candidate(cand, task, timeout=timeout)
             score = score_response(task, raw)
-            results.append({
-                "task": task["name"],
-                "model": cand["id"],
-                "kind": cand["kind"],
-                "provider": cand["provider"],
-                "latency": round(raw.get("latency", 0), 3),
-                "input_tokens": raw.get("input_tokens", 0),
-                "output_tokens": raw.get("output_tokens", 0),
-                "cost_usd": round(raw.get("cost", 0), 8),
-                "error": raw.get("error"),
-                "raw_text_preview": raw.get("text", "")[:200],
-                **score,
-            })
+            results.append(
+                {
+                    "task": task["name"],
+                    "model": cand["id"],
+                    "kind": cand["kind"],
+                    "provider": cand["provider"],
+                    "latency": round(raw.get("latency", 0), 3),
+                    "input_tokens": raw.get("input_tokens", 0),
+                    "output_tokens": raw.get("output_tokens", 0),
+                    "cost_usd": round(raw.get("cost", 0), 8),
+                    "error": raw.get("error"),
+                    "raw_text_preview": raw.get("text", "")[:200],
+                    **score,
+                }
+            )
             status = "OK" if raw.get("text") and not raw.get("error") else "FAIL"
-            print(f"{status:4} score={score['total']:3d} "
-                  f"lat={raw.get('latency', 0):5.2f}s "
-                  f"cost=${raw.get('cost', 0):.6f}")
+            print(
+                f"{status:4} score={score['total']:3d} "
+                f"lat={raw.get('latency', 0):5.2f}s "
+                f"cost=${raw.get('cost', 0):.6f}"
+            )
     return {"results": results}
 
 
@@ -457,9 +531,13 @@ def print_leaderboard(results: list[dict]) -> None:
     print("LEADERBOARD (sum of scores across tasks, higher = better)")
     print("=" * 80)
     print(f"{'Model':40} {'Avg':>5} {'Sum':>5} {'Latency':>9} {'Cost':>10} {'Status'}")
-    ranked = sorted(by_model.items(),
-                    key=lambda kv: (-sum(kv[1]) / len(kv[1]),
-                                    sum(r["latency"] for r in results if r["model"] == kv[0])))
+    ranked = sorted(
+        by_model.items(),
+        key=lambda kv: (
+            -sum(kv[1]) / len(kv[1]),
+            sum(r["latency"] for r in results if r["model"] == kv[0]),
+        ),
+    )
     for model, scores in ranked:
         recs = [r for r in results if r["model"] == model]
         avg = sum(scores) / len(scores)
@@ -467,8 +545,9 @@ def print_leaderboard(results: list[dict]) -> None:
         total_cost = sum(r["cost_usd"] for r in recs)
         any_err = any(r.get("error") for r in recs)
         status = "❌" if any_err else "✓"
-        print(f"{model:40} {avg:5.1f} {sum(scores):5d} {total_lat:8.2f}s "
-              f"${total_cost:9.6f}  {status}")
+        print(
+            f"{model:40} {avg:5.1f} {sum(scores):5d} {total_lat:8.2f}s ${total_cost:9.6f}  {status}"
+        )
 
     # per-task winner
     print("\n" + "=" * 80)
@@ -479,8 +558,10 @@ def print_leaderboard(results: list[dict]) -> None:
         by_task.setdefault(r["task"], []).append(r)
     for task, recs in by_task.items():
         winner = max(recs, key=lambda r: r["total"])
-        print(f"  {task:20} → {winner['model']:35} "
-              f"score={winner['total']:3d} lat={winner['latency']:5.2f}s")
+        print(
+            f"  {task:20} → {winner['model']:35} "
+            f"score={winner['total']:3d} lat={winner['latency']:5.2f}s"
+        )
 
 
 def main() -> int:
@@ -488,8 +569,11 @@ def main() -> int:
     p.add_argument("--model", action="append", help="filter to specific model id")
     p.add_argument("--task", action="append", help="filter to specific task name")
     p.add_argument("--timeout", type=float, default=30.0)
-    p.add_argument("--out", type=Path,
-                   default=Path.home() / ".claude" / "state" / "cheap-bench" / "results.jsonl")
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=Path.home() / ".claude" / "state" / "cheap-bench" / "results.jsonl",
+    )
     args = p.parse_args()
 
     model_filter = set(args.model) if args.model else None

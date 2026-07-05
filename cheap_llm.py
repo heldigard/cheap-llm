@@ -73,6 +73,7 @@ Decisions (2026-06-27, local-model-pruning — qwen3.5:4b promoted over gemma4:1
   - Dropped this round: kimi-k2 (superseded), gpt-5-nano + glm-4.7-flash
     (reasoning-only, content="" on short tasks), qwen3.6-flash (reasoning tax).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -83,6 +84,7 @@ import re
 import sys
 import time
 import urllib.request
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Defaults validated by cheap_bench.py (2026-06-19). Local primary is
@@ -122,12 +124,12 @@ REASONING_EFFORT_OVERRIDES: dict[str, str] = {}
 # tested-models.md. ZenMux real price is ~4-10x higher for the same model,
 # so this is a conservative LOWER-bound for ZenMux calls.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
-    "inclusionai/ling-2.6-flash":      (0.01,  0.03),
-    "inclusionai/ling-2.6-1t":         (0.075, 0.625),
-    "google/gemini-3.1-flash-lite":    (0.25,  1.50),
-    "openai/gpt-5.4-nano":             (0.20,  1.25),
-    "moonshotai/kimi-k2":              (0.57,  2.30),  # kept for cost lookup only
-    "deepseek/deepseek-v4-flash":      (0.14,  0.28),
+    "inclusionai/ling-2.6-flash": (0.01, 0.03),
+    "inclusionai/ling-2.6-1t": (0.075, 0.625),
+    "google/gemini-3.1-flash-lite": (0.25, 1.50),
+    "openai/gpt-5.4-nano": (0.20, 1.25),
+    "moonshotai/kimi-k2": (0.57, 2.30),  # kept for cost lookup only
+    "deepseek/deepseek-v4-flash": (0.14, 0.28),
 }
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
@@ -149,9 +151,9 @@ OLLAMA_URL = "http://localhost:11434"
 # Provider env-key mapping. Cheap_llm picks the right key per provider.
 PROVIDER_KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
-    "zenmux":     "ZENMUX_API_KEY",
-    "deepinfra":  "DEEPINFRA_API_KEY",
-    "deepseek":   "DEEPSEEK_API_KEY",
+    "zenmux": "ZENMUX_API_KEY",
+    "deepinfra": "DEEPINFRA_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
 }
 
 # Cascade as (model, provider) pairs. For each top model we try OpenRouter
@@ -167,19 +169,19 @@ PROVIDER_KEY_ENV: dict[str, str] = {
 # to TERTIARY: high quality (88.4 avg) but worst $/quality ratio of the 3.
 TOP3_CASCADE: list[tuple[str, str]] = [
     # PRIMARY: ling-2.6-flash (89.0 avg, $0.01/$0.03 OR / $0.10/$0.30 ZenMux)
-    ("inclusionai/ling-2.6-flash",     "openrouter"),
-    ("inclusionai/ling-2.6-flash",     "zenmux"),     # failover: 10x cost
+    ("inclusionai/ling-2.6-flash", "openrouter"),
+    ("inclusionai/ling-2.6-flash", "zenmux"),  # failover: 10x cost
     # SECONDARY: ling-2.6-1t (87.8 avg, $0.075/$0.625 OR / $0.30/$2.50 ZenMux)
     # 1T model for harder tasks. On OpenRouter it's ~5x cheaper than gemini
     # output. On ZenMux the worst case is comparable but quality is higher.
-    ("inclusionai/ling-2.6-1t",        "openrouter"),
-    ("inclusionai/ling-2.6-1t",        "zenmux"),     # failover: 4x cost
+    ("inclusionai/ling-2.6-1t", "openrouter"),
+    ("inclusionai/ling-2.6-1t", "zenmux"),  # failover: 4x cost
     # TERTIARY: gemini-3.1-flash-lite (88.4 avg, $0.25/$1.50 on both providers)
     # Demoted from secondary. Highest benchmark score but worst $/quality of
     # the 3 — even on OR it's 25x more expensive than ling-2.6-flash output
     # ($1.50 vs $0.03). Use only if both ling models fail.
-    ("google/gemini-3.1-flash-lite",   "openrouter"),
-    ("google/gemini-3.1-flash-lite",   "zenmux"),     # failover: same price
+    ("google/gemini-3.1-flash-lite", "openrouter"),
+    ("google/gemini-3.1-flash-lite", "zenmux"),  # failover: same price
 ]
 
 # Quaternary/Quinary safety net (still on OpenRouter BYOK / standard):
@@ -188,8 +190,8 @@ TOP3_CASCADE: list[tuple[str, str]] = [
 # quality. gpt-5-nano and glm-4.7-flash were REJECTED — both are
 # reasoning-only and return content="" on short classification tasks.
 LEGACY_CASCADE: list[tuple[str, str]] = [
-    ("openai/gpt-5.4-nano",            "openrouter"),  # 5/5 stable, cheap+fast
-    ("deepseek/deepseek-v4-flash",     "openrouter"),  # $0 BYOK (our key)
+    ("openai/gpt-5.4-nano", "openrouter"),  # 5/5 stable, cheap+fast
+    ("deepseek/deepseek-v4-flash", "openrouter"),  # $0 BYOK (our key)
 ]
 
 CACHE_DIR = Path.home() / ".claude" / "state" / "cheap-llm-cache"
@@ -201,34 +203,45 @@ CACHE_MAX_ENTRIES = 2000
 SECRET_PATTERNS = [
     # PEM private-key block (RSA/EC/OPENSSH/PGP) — full block first, then a
     # dangling BEGIN for truncated logs/diffs that never reach an END line.
-    (re.compile(r'-----BEGIN (?:[A-Z0-9 ]*)PRIVATE KEY-----.*?'
-                r'-----END (?:[A-Z0-9 ]*)PRIVATE KEY-----', re.S),
-     "<REDACTED_PEM_KEY>"),
-    (re.compile(r'-----BEGIN (?:[A-Z0-9 ]*)PRIVATE KEY-----[^\n]*'),
-     "<REDACTED_PEM_KEY>"),
+    (
+        re.compile(
+            r"-----BEGIN (?:[A-Z0-9 ]*)PRIVATE KEY-----.*?"
+            r"-----END (?:[A-Z0-9 ]*)PRIVATE KEY-----",
+            re.S,
+        ),
+        "<REDACTED_PEM_KEY>",
+    ),
+    (re.compile(r"-----BEGIN (?:[A-Z0-9 ]*)PRIVATE KEY-----[^\n]*"), "<REDACTED_PEM_KEY>"),
     # DB / message-broker connection strings with embedded creds:
     # postgres://user:pass@host, mongodb+srv://.., redis://.., amqp(s)://..
-    (re.compile(r'([a-zA-Z][a-zA-Z0-9+.\-]*://)([^:/@\s]+):([^@\s]+)@'),
-     r"\1<REDACTED_USER>:<REDACTED_PASS>@"),
+    (
+        re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)([^:/@\s]+):([^@\s]+)@"),
+        r"\1<REDACTED_USER>:<REDACTED_PASS>@",
+    ),
     # env-style assignment with quote
-    (re.compile(r'(?i)(password|passwd|secret|api[_-]?key|api[_-]?token|access[_-]?token|'
-                r'auth[_-]?token|private[_-]?key)\s*[:=]\s*["\'][^"\']{6,}["\']'),
-     r"\1=<REDACTED>"),
+    (
+        re.compile(
+            r"(?i)(password|passwd|secret|api[_-]?key|api[_-]?token|access[_-]?token|"
+            r'auth[_-]?token|private[_-]?key)\s*[:=]\s*["\'][^"\']{6,}["\']'
+        ),
+        r"\1=<REDACTED>",
+    ),
     # bare bearer / sk- / ghp_ / gho_ style
-    (re.compile(r'(?i)(Bearer\s+)[A-Za-z0-9._\-+/=]{16,}'),
-     r"\1<REDACTED_TOKEN>"),
-    (re.compile(r'\bsk-[A-Za-z0-9_\-]{20,}'), "<REDACTED_SK>"),
+    (re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-+/=]{16,}"), r"\1<REDACTED_TOKEN>"),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"), "<REDACTED_SK>"),
     # GitHub tokens: classic (ghp/gho/ghu/ghs/ghr, 36+ payload) + fine-grained PAT
-    (re.compile(r'\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b'), "<REDACTED_GH>"),
-    (re.compile(r'\bgithub_pat_[A-Za-z0-9_]{40,}\b'), "<REDACTED_GH>"),
-    (re.compile(r'\bxox[abprs]-[A-Za-z0-9-]{10,}'), "<REDACTED_XOX>"),
+    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b"), "<REDACTED_GH>"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"), "<REDACTED_GH>"),
+    (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), "<REDACTED_XOX>"),
     # cloud provider keys
-    (re.compile(r'\bAKIA[0-9A-Z]{16}\b'), "<REDACTED_AWS>"),       # AWS access-key id
-    (re.compile(r'\bAIza[0-9A-Za-z_\-]{35}\b'), "<REDACTED_GCP>"), # Google API key
-    (re.compile(r'\b(?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{20,}\b'), "<REDACTED_STRIPE>"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "<REDACTED_AWS>"),  # AWS access-key id
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), "<REDACTED_GCP>"),  # Google API key
+    (re.compile(r"\b(?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{20,}\b"), "<REDACTED_STRIPE>"),
     # JWT-ish (3 base64 segments)
-    (re.compile(r'\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
-     "<REDACTED_JWT>"),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),
+        "<REDACTED_JWT>",
+    ),
 ]
 
 
@@ -265,13 +278,22 @@ def _cache_get(key: str) -> dict | None:
 
 
 def _cache_put(key: str, value: dict) -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    # prune oldest beyond CACHE_MAX_ENTRIES
-    files = sorted(CACHE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
-    while len(files) >= CACHE_MAX_ENTRIES:
-        files.pop(0).unlink(missing_ok=True)
-    p = CACHE_DIR / f"{key}.json"
-    p.write_text(json.dumps(value))
+    # Atomic write (temp + rename) so a mid-write crash never leaves a partial
+    # cache file that the next _cache_get would try to parse. Cache writes are
+    # best-effort: failure here MUST NOT propagate and break a successful
+    # cascade — caller already returned the value to the user.
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        # prune oldest beyond CACHE_MAX_ENTRIES
+        files = sorted(CACHE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        while len(files) >= CACHE_MAX_ENTRIES:
+            files.pop(0).unlink(missing_ok=True)
+        target = CACHE_DIR / f"{key}.json"
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(value))
+        tmp.replace(target)
+    except Exception:
+        pass  # cache is advisory; never break the cascade on a write error
 
 
 # --- Transport ------------------------------------------------------------
@@ -300,8 +322,7 @@ def _resolve_cost(model: str, usage: dict, provider: str = "openrouter") -> floa
     return raw_cost
 
 
-def _call_ollama(model: str, system: str, prompt: str,
-                 timeout: float) -> dict:
+def _call_ollama(model: str, system: str, prompt: str, timeout: float) -> dict:
     # Smaller ctx for short tasks (faster on 16GB VRAM, where memory bandwidth
     # is the bottleneck — 9B at q8 leaves little room for big KV cache).
     # Heuristic: under 4K total input chars → 2048 ctx; else 8192 or 32768 for large tasks.
@@ -336,64 +357,38 @@ def _call_ollama(model: str, system: str, prompt: str,
     }
 
 
-def _call_openrouter(model: str, system: str, prompt: str,
-                     timeout: float) -> dict:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if not key:
-        raise RuntimeError("OPENROUTER_API_KEY not set")
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 1024,
-        "stream": False,
-    }
-    # Apply reasoning_effort override if this model is in the table.
-    if model in REASONING_EFFORT_OVERRIDES:
-        payload["reasoning_effort"] = REASONING_EFFORT_OVERRIDES[model]
-    req = urllib.request.Request(
-        f"{OPENROUTER_URL}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            # X-Title is OpenRouter's app-attribution field (shown on their
-            # leaderboard). Set honestly to the internal tool name; no fake
-            # repo URL — HTTP-Referer omitted rather than pointing at a
-            # non-existent project.
-            "X-Title": "cheap-llm-cascade",
-        },
-    )
-    t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        body = json.loads(r.read().decode())
-    latency = time.perf_counter() - t0
-    text = body["choices"][0]["message"]["content"].strip()
-    usage = body.get("usage", {})
-    return {
-        "text": text,
-        "latency": latency,
-        "input_tokens": usage.get("prompt_tokens", 0),
-        "output_tokens": usage.get("completion_tokens", 0),
-        "api_cost": _resolve_cost(model, usage, provider="openrouter"),
-        "provider": "openrouter",
-    }
+@dataclass(frozen=True)
+class _Endpoint:
+    """OpenAI-compatible chat-completions endpoint config.
 
-
-def _call_zenmux(model: str, system: str, prompt: str,
-                 timeout: float) -> dict:
-    """ZenMux call. Same OpenAI-compatible shape as OpenRouter.
-    ZenMux returns usage.cost=None and pricing may show $0 for promo models;
-    trust the public ZenMux pricing page (zenmux.ai/pricing) as production cost.
-    Note: ZenMux pricing is 4-10x HIGHER than OpenRouter for inclusionai
-    ling models (verified 2026-06-19). Use as failover, not primary.
+    Bundles url + key_env + provider_label + headers so the call-site helper
+    only sees one endpoint token instead of 4-5 positional params.
     """
-    key = os.environ.get("ZENMUX_API_KEY", "")
-    if not key:
-        raise RuntimeError("ZENMUX_API_KEY not set")
+
+    url: str
+    key_env: str
+    provider_label: str
+    extra_headers: dict[str, str] = field(default_factory=dict)
+
+
+def _openai_compat_call(
+    endpoint: _Endpoint,
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+) -> dict:
+    """Shared OpenAI-compatible chat-completions POST.
+
+    Used by _call_openrouter and _call_zenmux — both are OpenAI-shaped, only
+    URL/key/headers differ. Both providers have been observed returning
+    message.content=None for certain reasoning-style responses, so we coerce
+    None → "" rather than letting .strip() raise AttributeError on a fresh
+    model rollout.
+    """
+    api_key = os.environ.get(endpoint.key_env, "")
+    if not api_key:
+        raise RuntimeError(f"{endpoint.key_env} not set")
     payload = {
         "model": model,
         "messages": [
@@ -406,32 +401,64 @@ def _call_zenmux(model: str, system: str, prompt: str,
     }
     if model in REASONING_EFFORT_OVERRIDES:
         payload["reasoning_effort"] = REASONING_EFFORT_OVERRIDES[model]
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    headers.update(endpoint.extra_headers)
     req = urllib.request.Request(
-        f"{ZENMUX_URL}/chat/completions",
+        f"{endpoint.url.rstrip('/')}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-        },
+        headers=headers,
     )
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
-    text = body["choices"][0]["message"]["content"].strip()
+    msg = body["choices"][0]["message"]
+    text = (msg.get("content") or "").strip()
     usage = body.get("usage", {})
     return {
         "text": text,
         "latency": latency,
         "input_tokens": usage.get("prompt_tokens", 0),
         "output_tokens": usage.get("completion_tokens", 0),
-        "api_cost": _resolve_cost(model, usage, provider="zenmux"),  # ZenMux usage.cost is None → estimate
-        "provider": "zenmux",
+        "api_cost": _resolve_cost(model, usage, provider=endpoint.provider_label),
+        "provider": endpoint.provider_label,
     }
 
 
-def _call_deepseek(model: str, system: str, prompt: str,
-                   timeout: float) -> dict:
+# OpenRouter endpoint — X-Title is the app-attribution field shown on their
+# leaderboard. Set honestly to the internal tool name; no fake repo URL —
+# HTTP-Referer omitted rather than pointing at a non-existent project.
+OPENROUTER_ENDPOINT = _Endpoint(
+    url=OPENROUTER_URL,
+    key_env="OPENROUTER_API_KEY",
+    provider_label="openrouter",
+    extra_headers={"X-Title": "cheap-llm-cascade"},
+)
+
+# ZenMux endpoint. Same OpenAI-compatible shape as OpenRouter. ZenMux returns
+# usage.cost=None and pricing may show $0 for promo models; trust the public
+# ZenMux pricing page (zenmux.ai/pricing) as production cost. ZenMux pricing
+# is 4-10x HIGHER than OpenRouter for inclusionai ling models (verified
+# 2026-06-19). Use as failover, not primary.
+ZENMUX_ENDPOINT = _Endpoint(
+    url=ZENMUX_URL,
+    key_env="ZENMUX_API_KEY",
+    provider_label="zenmux",
+)
+
+
+def _call_openrouter(model: str, system: str, prompt: str, timeout: float) -> dict:
+    return _openai_compat_call(OPENROUTER_ENDPOINT, model, system, prompt, timeout)
+
+
+def _call_zenmux(model: str, system: str, prompt: str, timeout: float) -> dict:
+    return _openai_compat_call(ZENMUX_ENDPOINT, model, system, prompt, timeout)
+
+
+def _call_deepseek(model: str, system: str, prompt: str, timeout: float) -> dict:
     """DeepSeek FIRST-PARTY call (api.deepseek.com). OpenAI-compatible.
 
     NOTE 2026-07-02: OpenRouter now lists v4-flash at $0.089/$0.18 (below the
@@ -473,8 +500,7 @@ def _call_deepseek(model: str, system: str, prompt: str,
     usage = body.get("usage", {})
     in_tok = usage.get("prompt_tokens", 0) or 0
     out_tok = usage.get("completion_tokens", 0) or 0
-    cached = (usage.get("prompt_cache_hit_tokens")
-              or usage.get("prompt_cached_tokens") or 0)
+    cached = usage.get("prompt_cache_hit_tokens") or usage.get("prompt_cached_tokens") or 0
     # Cache-aware cost: fresh input @ list rate, cached input @ 1/10 of input
     # (V4 pricing 2026-04: Flash $0.14 fresh / $0.014 cached — verified
     # 2026-07-02 vs cloudzero/apidog pricing pages). Pro follows the same
@@ -482,8 +508,7 @@ def _call_deepseek(model: str, system: str, prompt: str,
     price = MODEL_PRICING.get(model, (0.14, 0.28))
     fresh_in = max(in_tok - cached, 0)
     cached_rate = price[0] / 10.0
-    cost = (fresh_in * price[0] + cached * cached_rate
-            + out_tok * price[1]) / 1_000_000.0
+    cost = (fresh_in * price[0] + cached * cached_rate + out_tok * price[1]) / 1_000_000.0
     return {
         "text": text,
         "latency": latency,
@@ -494,8 +519,7 @@ def _call_deepseek(model: str, system: str, prompt: str,
     }
 
 
-def _call_provider(model: str, provider: str, system: str,
-                   prompt: str, timeout: float) -> dict:
+def _call_provider(model: str, provider: str, system: str, prompt: str, timeout: float) -> dict:
     """Dispatch a (model, provider) call. Raises on transport error."""
     if provider == "ollama":
         return _call_ollama(model, system, prompt, timeout)
@@ -511,8 +535,8 @@ def _call_provider(model: str, provider: str, system: str,
 
 # --- JSON contract --------------------------------------------------------
 JSON_HINT = (
-    '\n\nReply with JSON only — no prose, no code fences, no explanation. '
-    'The first character must be `{` and the last must be `}`.'
+    "\n\nReply with JSON only — no prose, no code fences, no explanation. "
+    "The first character must be `{` and the last must be `}`."
 )
 
 
@@ -520,10 +544,10 @@ def _try_parse_json(text: str) -> dict | None:
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        lines = [l for l in lines if not l.strip().startswith("```")]
+        lines = [line for line in lines if not line.strip().startswith("```")]
         text = "\n".join(lines).strip()
     if "{" in text and "}" in text:
-        text = text[text.find("{"): text.rfind("}") + 1]
+        text = text[text.find("{") : text.rfind("}") + 1]
     try:
         result = json.loads(text)
     except json.JSONDecodeError:
@@ -547,6 +571,138 @@ def _validate(parsed: dict | None, schema: tuple[str, ...] | None) -> bool:
 
 
 # --- Main cascade ---------------------------------------------------------
+# vs-soft-allow — cheap_complete signature has 8 kwargs (system, prompt,
+# schema_hint, timeout_total, prefer_local, require_json, model, cloud_model).
+# These are the cascade resolver's feature toggles; the 8 consumer scripts in
+# ~/.claude/scripts/ (commit-draft, diff-review, error-classify,
+# extract-tool-output, intent_route, pdf-extract-structured, pr-draft,
+# test-triage) depend on this exact public signature.
+
+
+def _build_cascade(
+    prefer_local: bool,
+    local_model: str | None,
+    cloud_model: str | None,
+) -> list[tuple[str, str, str, float]]:
+    """Build the ordered (tier, model, provider, timeout) cascade.
+
+    Cascade order (2026-06-19, round 3 — kept stable; cloud_model=None path):
+      PRIMARY  ling-2.6-flash  OR → ZenMux
+      SECONDARY ling-2.6-1t     OR → ZenMux
+      TERTIARY  gemini-3.1-flash-lite  OR → ZenMux
+      SAFETY NET gpt-5.4-nano   OR
+      SAFETY NET deepseek-v4-flash OR
+
+    Forced `cloud_model` (judgment-heavy tasks — e.g. web-research synthesis):
+      - deepseek/... → FIRST-PARTY (cheapest + cache-aware) → OR → ZenMux
+      - other        → OR → ZenMux
+    """
+    cascade: list[tuple[str, str, str, float]] = []
+    if prefer_local:
+        # T1 timeout 6s (not 3s): lets short tasks (classify/commit/error)
+        # resolve FREE + PRIVATE, leaving only heavier extract/review to cloud.
+        cascade.append(("T1", local_model or DEFAULT_LOCAL_PRIMARY, "ollama", 6.0))
+    if cloud_model:
+        if cloud_model.startswith("deepseek/"):
+            cascade.append(("T2", cloud_model, "deepseek", 18.0))
+        cascade.append(("T2", cloud_model, "openrouter", 18.0))
+        cascade.append(("T2", cloud_model, "zenmux", 18.0))
+        return cascade
+    for m, p in TOP3_CASCADE:
+        cascade.append(("T2", m, p, 12.0))
+    for m, p in LEGACY_CASCADE:
+        cascade.append(("T2", m, p, 12.0))
+    return cascade
+
+
+def _try_cache_hit(
+    ckey: str,
+    tier: str,
+    model: str,
+    provider: str,
+    schema_t: tuple[str, ...],
+    require_json: bool,
+    attempts: list[dict],
+) -> dict | None:
+    """Return a cache-hit success envelope, or None on miss / invalid cached value.
+
+    Cache is keyed per-MODEL (not per-provider): a ZenMux failover after an
+    OpenRouter miss reuses the same answer, saving cost.
+    """
+    cached = _cache_get(ckey)
+    if not cached:
+        return None
+    attempts.append(
+        {
+            "tier": tier,
+            "model": model,
+            "provider": provider,
+            "cache_hit": True,
+            "latency": 0,
+            "cost": 0,
+        }
+    )
+    text = cached["text"]
+    parsed = _try_parse_json(text) if require_json else None
+    ok = _validate(parsed, schema_t) if require_json else True
+    if not ok:
+        return None
+    return {
+        "text": text,
+        "model": model,
+        "provider": provider,
+        "tier": tier,
+        "latency": 0,
+        "cost": 0,
+        "json_valid": parsed is not None,
+        "fields_ok": _validate(parsed, schema_t),
+        "attempts": attempts,
+        "cached": True,
+    }
+
+
+def _try_live_hit(
+    raw: dict,
+    tier: str,
+    model: str,
+    provider: str,
+    ckey: str,
+    schema_t: tuple[str, ...],
+    require_json: bool,
+    attempts: list[dict],
+) -> dict | None:
+    """Build the live success envelope + cache, or return None if validation fails."""
+    text = raw["text"]
+    cost = raw.get("api_cost") or 0.0
+    parsed = _try_parse_json(text) if require_json else None
+    ok = _validate(parsed, schema_t) if require_json else bool(text)
+    attempts.append(
+        {
+            "tier": tier,
+            "model": model,
+            "provider": provider,
+            "latency": round(raw["latency"], 3),
+            "cost": cost,
+            "json_valid": parsed is not None,
+        }
+    )
+    if not ok:
+        return None
+    _cache_put(ckey, {"text": text})
+    return {
+        "text": text,
+        "model": model,
+        "provider": raw.get("provider", provider),
+        "tier": tier,
+        "latency": raw["latency"],
+        "cost": cost,
+        "json_valid": parsed is not None,
+        "fields_ok": _validate(parsed, schema_t),
+        "attempts": attempts,
+        "cached": False,
+    }
+
+
 def cheap_complete(
     system: str,
     prompt: str,
@@ -582,40 +738,11 @@ def cheap_complete(
     if require_json and schema_t:
         eff_system = scrubbed_system + JSON_HINT + f" Required keys: {list(schema_t)}."
 
-    # Cascade as (tier, model, provider, timeout).
-    # Top 3 with cross-provider failover:
-    #   PRIMARY ling-2.6-flash on OpenRouter → ZenMux backup
-    #   SECONDARY gemini-3.1-flash-lite on OpenRouter → ZenMux backup
-    #   TERTIARY ling-2.6-1t on OpenRouter → ZenMux backup
-    # Then legacy safety net (kimi-k2, deepseek-v4-flash on OpenRouter).
-    cascade: list[tuple[str, str, str, float]] = []
-    if prefer_local:
-        # T1 timeout 6s (not 3s): lets short tasks (classify/commit/error)
-        # resolve FREE + PRIVATE, leaving only heavier extract/review to cloud.
-        # local_model: honor a caller model override (diff-review --model /
-        # commit-draft --model) else the universal DEFAULT_LOCAL_PRIMARY.
-        # NB: read `model` (param) here — the cascade loop below rebinds it.
-        local_model = model if model else DEFAULT_LOCAL_PRIMARY
-        cascade.append(("T1", local_model, "ollama", 6.0))
-    if cloud_model:
-        # Forced single cloud model (caller wants a frontier-class economical
-        # model for a judgment-heavy task — e.g. deepseek-v4-flash for cited
-        # synthesis / error root-cause). DeepSeek models go FIRST-PARTY direct
-        # (cheapest + cache-aware), then OpenRouter → ZenMux failover.
-        if cloud_model.startswith("deepseek/"):
-            cascade.append(("T2", cloud_model, "deepseek", 18.0))
-        cascade.append(("T2", cloud_model, "openrouter", 18.0))
-        cascade.append(("T2", cloud_model, "zenmux", 18.0))
-    else:
-        for model, provider in TOP3_CASCADE:
-            cascade.append(("T2", model, provider, 12.0))
-        for model, provider in LEGACY_CASCADE:
-            cascade.append(("T2", model, provider, 12.0))
-
+    cascade = _build_cascade(prefer_local, model, cloud_model)
     attempts: list[dict] = []
     deadline = time.perf_counter() + timeout_total
 
-    for tier, model, provider, per_timeout in cascade:
+    for tier, mdl, provider, per_timeout in cascade:
         remaining = deadline - time.perf_counter()
         if remaining <= 0:
             break
@@ -624,61 +751,29 @@ def cheap_complete(
         # cache lookup (per-model, NOT per-provider: same model on different
         # providers usually gives the same answer for short tasks; saves cost
         # if OpenRouter fails and we try ZenMux, ZenMux call hits cache).
-        ckey = _cache_key(model, eff_system, scrubbed_prompt, schema_t)
-        cached = _cache_get(ckey)
-        if cached:
-            attempts.append({"tier": tier, "model": model, "provider": provider,
-                             "cache_hit": True, "latency": 0, "cost": 0})
-            text = cached["text"]
-            parsed = _try_parse_json(text) if require_json else None
-            ok = _validate(parsed, schema_t) if require_json else True
-            if ok:
-                return {
-                    "text": text,
-                    "model": model,
-                    "provider": provider,
-                    "tier": tier,
-                    "latency": 0,
-                    "cost": 0,
-                    "json_valid": parsed is not None,
-                    "fields_ok": _validate(parsed, schema_t),
-                    "attempts": attempts,
-                    "cached": True,
-                }
+        ckey = _cache_key(mdl, eff_system, scrubbed_prompt, schema_t)
+        hit = _try_cache_hit(ckey, tier, mdl, provider, schema_t, require_json, attempts)
+        if hit is not None:
+            return hit
 
-        # live call (per-provider)
         try:
-            raw = _call_provider(model, provider, eff_system, scrubbed_prompt, eff_timeout)
+            raw = _call_provider(mdl, provider, eff_system, scrubbed_prompt, eff_timeout)
         except Exception as e:
-            attempts.append({"tier": tier, "model": model, "provider": provider,
-                             "error": f"{type(e).__name__}: {e}"})
+            attempts.append(
+                {
+                    "tier": tier,
+                    "model": mdl,
+                    "provider": provider,
+                    "error": f"{type(e).__name__}: {e}",
+                }
+            )
             continue
 
-        text = raw["text"]
-        cost = raw.get("api_cost") or 0.0
-        parsed = _try_parse_json(text) if require_json else None
-        ok = _validate(parsed, schema_t) if require_json else bool(text)
-        attempts.append({
-            "tier": tier, "model": model, "provider": provider,
-            "latency": round(raw["latency"], 3),
-            "cost": cost, "json_valid": parsed is not None,
-        })
-        if ok:
-            _cache_put(ckey, {"text": text})
-            return {
-                "text": text,
-                "model": model,
-                "provider": raw.get("provider", provider),
-                "tier": tier,
-                "latency": raw["latency"],
-                "cost": cost,
-                "json_valid": parsed is not None,
-                "fields_ok": _validate(parsed, schema_t),
-                "attempts": attempts,
-                "cached": False,
-            }
+        env = _try_live_hit(raw, tier, mdl, provider, ckey, schema_t, require_json, attempts)
+        if env is not None:
+            return env
 
-    # all tiers failed
+    # all tiers failed or returned invalid output
     return {
         "text": "",
         "model": None,
@@ -695,15 +790,19 @@ def cheap_complete(
 # --- CLI ------------------------------------------------------------------
 def _probe() -> dict:
     """Report what's available right now."""
-    out: dict = {"ollama_alive": False, "local_models": [],
-                 "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY"))}
+    out: dict = {
+        "ollama_alive": False,
+        "local_models": [],
+        "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
+    }
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=2) as r:
             data = json.loads(r.read())
         out["ollama_alive"] = True
-        out["local_models"] = [m["name"] for m in data.get("models", [])
-                               if "embed" not in m["name"]]
+        out["local_models"] = [
+            m["name"] for m in data.get("models", []) if "embed" not in m["name"]
+        ]
     except Exception as e:
         out["ollama_error"] = f"{type(e).__name__}: {e}"
     return out
@@ -745,9 +844,11 @@ def main() -> int:
             print(f"\n[cheap_llm] error: {result['error']}", file=sys.stderr)
             return 1
         if result.get("model"):
-            meta = (f"\n[cheap_llm] model={result['model']} tier={result['tier']} "
-                    f"lat={result['latency']:.2f}s cost=${result['cost']:.6f} "
-                    f"json_valid={result['json_valid']} cached={result['cached']}")
+            meta = (
+                f"\n[cheap_llm] model={result['model']} tier={result['tier']} "
+                f"lat={result['latency']:.2f}s cost=${result['cost']:.6f} "
+                f"json_valid={result['json_valid']} cached={result['cached']}"
+            )
             print(meta, file=sys.stderr)
     return 0
 
