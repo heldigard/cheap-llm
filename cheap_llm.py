@@ -2,7 +2,7 @@
 """Unified cheap-LLM cascade client for preprocessor slots.
 
 Replaces ad-hoc ollama_client calls in commit-draft / diff-review / error-classify /
-extract-tool-output / improve-prompt with one place that knows the cascade,
+extract-tool-output / prompt-improve with one place that knows the cascade,
 timeouts, secret-scrub, output contract, and budget.
 
 SCOPE — a SIGNAL-DISTILLATION layer for the big model, NOT a coder. The
