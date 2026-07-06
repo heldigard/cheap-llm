@@ -87,12 +87,14 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Defaults validated by cheap_bench.py (2026-06-19). Local primary is
-# gemma4:12b: R4 head-to-head avg 84.2 on 5 preprocessor tasks, ~3× faster
-# than the prior qwen3.5:9b local (9b deleted 2026-06-19 — gemma4:12b wins
-# on every axis). Bonus: gemma4:12b == ollama_client.DEFAULT_GEN_MODEL, so
-# the whole local ecosystem (hooks + this cascade) keeps ONE model warm —
-# no VRAM swap thrash on 16GB (qwen3.5:4b 3.4GB leaves room for parallel).
+# Local T1 primary (local-model-pruning 2026-06-27). qwen3.5:4b is the
+# universal fallback across all 5 ecosystem preprocessor tasks: 3.4GB,
+# 81 tok/s, matches gemma4:12b's compact quality at ~2× speed / 3× less VRAM.
+# It also equals ollama_client.DEFAULT_GEN_MODEL, so the whole local
+# ecosystem (hooks + this cascade) keeps ONE model warm — no VRAM swap
+# thrash on 16GB. gemma4:12b was deleted 2026-06-27 (qwen3.5:4b wins on
+# every axis for hook/preprocessor use); the prior gemma4:12b comments that
+# lived here were stale and contradicted the assignment below.
 DEFAULT_LOCAL_PRIMARY = "qwen3.5:4b"
 # Cascade order (2026-06-19 round 3, top 5 cloud + 1 local).
 # CORRECTED PRICING (per OpenRouter's own listing — the API's usage.cost
