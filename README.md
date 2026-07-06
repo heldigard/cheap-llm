@@ -57,8 +57,11 @@ Cross-provider failover: OpenRouter primary, ZenMux backup per model.
 ## Testing
 
 ```bash
-# Unit + mocked (86 tests, offline, no API keys needed)
+# Unit + mocked (101 tests, offline, no API keys needed)
 python3 tests/test_cheap_llm.py
+
+# Public-API contract gate (SemVer + signature + return shape + require())
+python3 tests/test_contract.py
 
 # Live + E2E (real API calls, opt-in)
 python3 tests/test_cheap_llm_live.py --live
@@ -67,12 +70,30 @@ python3 tests/test_cheap_llm_live.py --live
 python3 cheap_bench.py
 ```
 
+## Versioning / Contract (ecosystem decoupling)
+
+The public surface consumers depend on is **declared and versioned** so this
+project evolves without silently breaking fusion / web-research / the 7
+`~/.claude/scripts` consumers:
+
+- `__version__` (SemVer), `__all__`, `RESULT_KEYS`, `CHEAP_COMPLETE_PARAMS`,
+  `CONTRACT`. Everything else is `_`-private.
+- `require(min_version)` — version gate; consumers fail fast on drift.
+- `tests/test_contract.py` — breaking change fails here first → MAJOR bump.
+- SemVer: MAJOR=removed/renamed public param or key · MINOR=additive · PATCH=internal.
+
+```python
+import cheap_llm
+cheap_llm.require("1.1")                      # trips loudly if installed < 1.1
+out = cheap_llm.cheap_complete(system=..., prompt=...)
+```
+
 ## Consumers
 
-8 scripts in `~/.claude/scripts/` import `cheap_llm` for LLM-backed
+7 scripts in `~/.claude/scripts/` import `cheap_llm` for LLM-backed
 preprocessing: commit-draft, diff-review, error-classify, extract-tool-output,
-intent_route, pdf-extract-structured, pr-draft, test-triage. Also used by
-`~/web-research/` as synthesis cloud fallback.
+pdf-extract-structured, pr-draft, test-triage. Also used by `~/web-research/`
+(synthesis cloud fallback) and `~/fusion/` (judge transport).
 
 ## Security
 

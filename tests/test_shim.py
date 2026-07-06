@@ -15,6 +15,10 @@ if not callable(mod.cheap_complete):
     errors.append("cheap_complete not callable")
 if not callable(mod.scrub_secrets):
     errors.append("scrub_secrets not callable")
+if not callable(mod.require):
+    errors.append("require not callable")
+if mod.__version__ != mod.require():
+    errors.append(f"__version__ {mod.__version__} != require() {mod.require()}")
 if mod.DEFAULT_LOCAL_PRIMARY != "qwen3.5:4b":
     errors.append(f"DEFAULT_LOCAL_PRIMARY={mod.DEFAULT_LOCAL_PRIMARY}")
 if len(mod.TOP3_CASCADE) != 6:

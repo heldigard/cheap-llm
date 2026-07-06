@@ -21,7 +21,7 @@ context, never executed code.
 cheap_llm.py          core module — cascade, transport, scrub, cache, CLI
 cheap_bench.py        benchmark harness (self-contained transport layer)
 tests/
-  test_cheap_llm.py       unit + mocked tests (86 tests, offline, no network)
+  test_cheap_llm.py       unit + mocked tests (101 tests, offline, no network)
   test_cheap_llm_live.py  live + E2E tests (real API calls, opt-in via --live)
 ```
 
@@ -37,7 +37,7 @@ T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3
 ## Entry points
 
 - **Wired ecosystem shim**: `~/.claude/scripts/cheap_llm.py` → imports from
-  here (env `CHEAP_LLM_HOME`, default `~/cheap-llm`). The 8 consumer scripts
+  here (env `CHEAP_LLM_HOME`, default `~/cheap-llm`). The 7 consumer scripts
   that do `import cheap_llm` keep resolving untouched.
 - **Console script** (`pip install -e .`): `cheap-llm`.
 - **Direct**: `python3 cheap_llm.py --probe`.
@@ -45,13 +45,47 @@ T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3
 ## CLI
 
 ```
+cheap-llm --version                            # print SemVer and exit
 cheap-llm --probe                              # show what's available
 cheap-llm --system "X" --prompt "Y"            # run cascade, print text
 cheap-llm --system "X" --prompt "Y" --json     # full JSON envelope
 cheap-llm --system "X" --prompt "Y" --schema f1 f2  # with field validation
 ```
 
-## Consumers (8 scripts in ~/.claude/scripts/)
+## Public API contract (SemVer) — ecosystem decoupling
+
+The surface consumers may depend on is **declared and versioned**, so this
+project evolves without silently breaking fusion / web-research / the 7
+`~/.claude/scripts` consumers.
+
+- `__version__` (SemVer), `__all__` (public names), `RESULT_KEYS` (stable
+  `cheap_complete()` return shape), `CHEAP_COMPLETE_PARAMS` (signature),
+  `CONTRACT` (the whole shape as a dict). Everything else is `_`-private.
+- `require(min_version)` — version gate. Consumers call it right after import
+  to **fail fast** with an actionable message on drift, instead of a cryptic
+  mid-run error. `cheap_llm.require("1.1")` → ok or `RuntimeError`.
+- **Uniform return shape** — every `cheap_complete()` result has ALL
+  `RESULT_KEYS` (success sets `error=None`; failure sets `provider=None`,
+  `cached=False`). `_complete_result()` is the single enforcement point.
+- **`tests/test_contract.py`** — the evolution gate. A breaking change (removed/
+  renamed public param or RESULT_KEY) fails THERE first and forces a MAJOR bump.
+
+**SemVer policy** (how independent evolution stays safe):
+- MAJOR = removed/renamed public param or RESULT_KEY (consumers' `require()` trips)
+- MINOR = additive (new param with default, new RESULT_KEY, new public fn)
+- PATCH = internal refactor, cascade/model changes, bug fixes
+
+**Consumer adoption** (opt-in, backward compatible):
+```python
+import cheap_llm
+cheap_llm.require("1.1")          # declare the contract floor this consumer needs
+out = cheap_llm.cheap_complete(system=..., prompt=...)
+```
+`fusion` already adopts this (`judge.py::_CHEAP_LLM_MIN_VERSION`). The 7
+`~/.claude/scripts` consumers + web-research can adopt incrementally — the
+contract + test prevent silent breaks meanwhile.
+
+## Consumers (7 scripts in ~/.claude/scripts/)
 
 | Script | What it uses cheap_llm for |
 |--------|---------------------------|
@@ -59,12 +93,27 @@ cheap-llm --system "X" --prompt "Y" --schema f1 f2  # with field validation
 | diff-review.py | Flag issues in code diffs |
 | error-classify.py | Triage errors to cause/fix |
 | extract-tool-output.py | Extract relevant lines from verbose logs |
-| intent_route.py | Classify developer prompt intent + tier |
 | pdf-extract-structured.py | Cloud fallback for PDF extraction |
 | pr-draft.py | Draft PR descriptions |
 | test-triage.py | Synthesize test failure explanations |
 
-Also consumed by `~/web-research/` (synthesis engine cloud fallback).
+Also consumed by `~/web-research/` (synthesis engine cloud fallback) and
+`~/fusion/` (judge transport via `CHEAP_LLM_HOME`).
+
+## Synergy / Cross-CLI
+
+Two bootstrap conventions, by design:
+- **Shim path** (`~/.claude/scripts/cheap_llm.py`) — Claude-ecosystem compat.
+  The 7 consumer scripts + web-research `compat.py` import the shim, which
+  re-exports the real module. Resolves `ollama_client` too (same dir).
+- **`CHEAP_LLM_HOME`** (`~/cheap-llm`, project root) — external consumers
+  (`fusion` judge) put this on `sys.path` to import the real module directly.
+
+The 7 signal-distillation consumers live in `~/.claude/scripts/` (Claude-only
+by design — each CLI owns its own consumers). Codex / Antigravity / OpenCode
+access cheap-llm via the raw `cheap-llm` console script (on the shared
+`~/.local/bin` PATH) or by importing through `CHEAP_LLM_HOME` (the fusion
+pattern).
 
 ## Conventions
 
