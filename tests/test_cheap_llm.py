@@ -82,6 +82,10 @@ check("validate all fields present", cl._validate({"a": 1, "b": 2}, ("a", "b")) 
 check("validate missing field", cl._validate({"a": 1}, ("a", "b")) is False)
 check("validate empty field rejected", cl._validate({"a": "", "b": 2}, ("a", "b")) is False)
 check("validate None field rejected", cl._validate({"a": None, "b": 2}, ("a", "b")) is False)
+check("validate empty array accepted", cl._validate({"a": []}, ("a",)) is True)
+check("validate empty object accepted", cl._validate({"a": {}}, ("a",)) is True)
+check("validate false boolean accepted", cl._validate({"a": False}, ("a",)) is True)
+check("validate zero accepted", cl._validate({"a": 0}, ("a",)) is True)
 
 # scrub_secrets
 check(
@@ -188,7 +192,7 @@ class _FakeResp(io.BytesIO):
     def __enter__(self):
         return self
 
-    def __exit__(self, *a):
+    def __exit__(self, *_args):
         return None
 
 
@@ -362,7 +366,7 @@ def _ok(text: str, cost: float = 0.000001, latency: float = 1.0, provider: str =
 cache_dir = Path.home() / ".claude" / "state" / "cheap-llm-cache"
 shutil.rmtree(cache_dir, ignore_errors=True)
 
-log, restore = _stub_cascade(
+log, _restore_unused = _stub_cascade(
     {
         ("inclusionai/ling-2.6-flash", "openrouter"): [_ok('{"category": "debug"}')],
     }
@@ -444,7 +448,7 @@ _restore_call_provider()
 
 
 # M4: All providers fail → graceful error
-def _m4_call(*a, **kw):
+def _m4_call(*_args, **_kwargs):
     raise RuntimeError("everything is down")
 
 
@@ -477,7 +481,7 @@ def _m5_call(model, provider, sys, prompt, timeout):
 
 cl._call_provider = _m5_call
 shutil.rmtree(cache_dir, ignore_errors=True)
-out1 = cl.cheap_complete(
+cl.cheap_complete(
     system="C.",
     prompt="same prompt",
     schema_hint=["category"],
@@ -595,7 +599,7 @@ real_cache_dir = cl.CACHE_DIR
 try:
     cl.CACHE_DIR = Path("/proc/this-cannot-be-created/cheap-llm-test")
     try:
-        cl._cache_put(ckey2 := cl._cache_key("err-probe", "s", "p", None), {"text": "x"})
+        cl._cache_put(cl._cache_key("err-probe", "s", "p", None), {"text": "x"})
         check("cache: write failure swallowed (does not raise)", True)
     except Exception as e:
         check(
@@ -650,7 +654,6 @@ except (AttributeError, dataclasses.FrozenInstanceError):
 # _build_cascade returns the right shape: T1 first (default), T2 cloud pairs
 # second, legacy last
 cascade_default = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
-tiers = [c[0] for c in cascade_default]
 check("cascade default: starts with T1 ollama", cascade_default[0][0] == "T1")
 check(
     "cascade default: ends with LEGACY (gpt-5.4-nano or deepseek-v4-flash)",

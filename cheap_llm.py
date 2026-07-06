@@ -95,7 +95,7 @@ from pathlib import Path
 #   - MAJOR = removed/renamed public param or RESULT_KEY (consumers' require() gate trips)
 #   - MINOR = additive (new param with default, new RESULT_KEY, new public fn)
 #   - PATCH = internal refactor, model/cascade changes, bug fixes
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -251,14 +251,6 @@ ZENMUX_URL = "https://zenmux.ai/api/v1"
 DEEPSEEK_URL = "https://api.deepseek.com/v1"
 OLLAMA_URL = "http://localhost:11434"
 
-# Provider env-key mapping. Cheap_llm picks the right key per provider.
-PROVIDER_KEY_ENV: dict[str, str] = {
-    "openrouter": "OPENROUTER_API_KEY",
-    "zenmux": "ZENMUX_API_KEY",
-    "deepinfra": "DEEPINFRA_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-}
-
 # Cascade as (model, provider) pairs. For each top model we try OpenRouter
 # first, then ZenMux as backup. DeepInfra is intentionally NOT in the cascade
 # for the ling/gemini top-3 because (a) it doesn't host ling-2.6 models,
@@ -298,7 +290,6 @@ LEGACY_CASCADE: list[tuple[str, str]] = [
 ]
 
 CACHE_DIR = Path.home() / ".claude" / "state" / "cheap-llm-cache"
-CACHE_MAX_TEMP = 0.3
 CACHE_MAX_ENTRIES = 2000
 
 # --- Secret scrub ---------------------------------------------------------
@@ -666,11 +657,20 @@ def _try_parse_json(text: str) -> dict | None:
 
 
 def _validate(parsed: dict | None, schema: tuple[str, ...] | None) -> bool:
+    """Validate required JSON fields without rejecting valid empty containers."""
     if parsed is None:
         return False
     if not schema:
         return True
-    return all(parsed.get(f) not in (None, "", [], {}) for f in schema)
+    for name in schema:
+        if name not in parsed:
+            return False
+        value = parsed[name]
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+    return True
 
 
 # --- Main cascade ---------------------------------------------------------

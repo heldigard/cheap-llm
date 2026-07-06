@@ -214,7 +214,7 @@ if LIVE:
         # L4: cache hit — repeat identical call → cached=True, no provider call
         try:
             cl._cache_put  # ensure present
-            out1 = cl.cheap_complete(
+            cl.cheap_complete(
                 system="Cache probe.",
                 prompt="identical-cache-key-prompt-xyz",
                 schema_hint=["category"],

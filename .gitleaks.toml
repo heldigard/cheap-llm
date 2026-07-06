@@ -1,0 +1,5 @@
+[allowlist]
+description = "Synthetic secret fixtures used to test scrub_secrets redaction."
+paths = [
+  '''tests/test_cheap_llm\.py''',
+]
