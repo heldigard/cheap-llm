@@ -93,7 +93,7 @@ out = cheap_llm.cheap_complete(system=..., prompt=...)
 7 scripts in `~/.claude/scripts/` import `cheap_llm` for LLM-backed
 preprocessing: commit-draft, diff-review, error-classify, extract-tool-output,
 pdf-extract-structured, pr-draft, test-triage. Also used by `~/web-research/`
-(synthesis cloud fallback) and `~/fusion/` (judge transport).
+(synthesis cloud fallback) and `~/fusion-local/` (judge transport).
 
 ## Security
 

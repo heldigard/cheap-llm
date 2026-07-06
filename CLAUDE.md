@@ -98,7 +98,7 @@ contract + test prevent silent breaks meanwhile.
 | test-triage.py | Synthesize test failure explanations |
 
 Also consumed by `~/web-research/` (synthesis engine cloud fallback) and
-`~/fusion/` (judge transport via `CHEAP_LLM_HOME`).
+`~/fusion-local/` (judge transport via `CHEAP_LLM_HOME`).
 
 ## Synergy / Cross-CLI
 
