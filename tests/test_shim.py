@@ -21,6 +21,8 @@ if mod.__version__ != mod.require():
     errors.append(f"__version__ {mod.__version__} != require() {mod.require()}")
 if mod.DEFAULT_LOCAL_PRIMARY != "qwen3.5:4b":
     errors.append(f"DEFAULT_LOCAL_PRIMARY={mod.DEFAULT_LOCAL_PRIMARY}")
+if "functiongemma" not in mod.DEFAULT_LOCAL_STRUCTURED:
+    errors.append(f"DEFAULT_LOCAL_STRUCTURED={mod.DEFAULT_LOCAL_STRUCTURED}")
 if len(mod.TOP3_CASCADE) != 6:
     errors.append(f"TOP3_CASCADE len={len(mod.TOP3_CASCADE)}")
 if not hasattr(mod, "CACHE_DIR"):

@@ -24,7 +24,8 @@ Cascade (T1 → T2 cloud with cross-provider failover), tried in order,
 first success wins. Build by cheap_complete() from DEFAULT_LOCAL_PRIMARY +
 TOP3_CASCADE + LEGACY_CASCADE (see those constants for the live order):
 
-  T1 LOCAL (free, private)        timeout 6s  — qwen3.5:4b (Ollama)
+  T1 LOCAL (free, private)        timeout 6s  — qwen3.5:4b for text,
+                                                    functiongemma for JSON/schema
   T2 CHEAP CLOUD                  timeout 12s — TOP3_CASCADE:
       ling-2.6-flash @ openrouter → zenmux      ($0.01/$0.03 per M)
       ling-2.6-1t    @ openrouter → zenmux      ($0.075/$0.625 per M)
@@ -188,15 +189,11 @@ def _complete_result(env: dict) -> dict:
     return env
 
 
-# Local T1 primary (local-model-pruning 2026-06-27). qwen3.5:4b is the
-# universal fallback across all 5 ecosystem preprocessor tasks: 3.4GB,
-# 81 tok/s, matches gemma4:12b's compact quality at ~2× speed / 3× less VRAM.
-# It also equals ollama_client.DEFAULT_GEN_MODEL, so the whole local
-# ecosystem (hooks + this cascade) keeps ONE model warm — no VRAM swap
-# thrash on 16GB. gemma4:12b was deleted 2026-06-27 (qwen3.5:4b wins on
-# every axis for hook/preprocessor use); the prior gemma4:12b comments that
-# lived here were stale and contradicted the assignment below.
+# Local T1 defaults. qwen3.5:4b stays the free-text compatibility default and
+# matches ollama_client.DEFAULT_GEN_MODEL. JSON/schema calls use the measured
+# structured-output specialist unless callers pass an explicit `model=...`.
 DEFAULT_LOCAL_PRIMARY = "qwen3.5:4b"
+DEFAULT_LOCAL_STRUCTURED = "hf.co/slyfox1186/qwen3.5-9b-opus-4.6-functiongemma.gguf:Q4_K_M"
 # Cascade order (2026-06-19 round 3, top 5 cloud + 1 local).
 # CORRECTED PRICING (per OpenRouter's own listing — the API's usage.cost
 # field returns $0 for some models in preview/promo but the public list
@@ -259,6 +256,7 @@ def _strip_ollama_reasoning(text: str) -> str:
     text = re.sub(r"<think\b[^>]*>.*?(</think\s*>|$)", "", text, flags=re.S | re.I)
     text = re.sub(r"<reasoning\b[^>]*>.*?(</reasoning\s*>|$)", "", text, flags=re.S | re.I)
     text = re.sub(r"<reflection\b[^>]*>.*?(</reflection\s*>|$)", "", text, flags=re.S | re.I)
+    text = re.sub(r"^.*?</(?:think|reasoning|reflection)\s*>", "", text, flags=re.S | re.I)
     text = re.sub(r"<output\b[^>]*>(.*?)</output\s*>", r"\1", text, flags=re.S | re.I)
     text = re.sub(r"<\|channel\|>.*?(<\|channel\|>|$)", "", text, flags=re.S | re.I)
     visible = re.search(
@@ -729,7 +727,9 @@ def _build_cascade(
     if prefer_local:
         # T1 timeout 6s (not 3s): lets short tasks (classify/commit/error)
         # resolve FREE + PRIVATE, leaving only heavier extract/review to cloud.
-        cascade.append(("T1", local_model or DEFAULT_LOCAL_PRIMARY, "ollama", 6.0))
+        resolved = local_model or DEFAULT_LOCAL_PRIMARY
+        local_timeout = 12.0 if resolved == DEFAULT_LOCAL_STRUCTURED else 6.0
+        cascade.append(("T1", resolved, "ollama", local_timeout))
     if cloud_model:
         if cloud_model.startswith("deepseek/"):
             cascade.append(("T2", cloud_model, "deepseek", 18.0))
@@ -741,6 +741,15 @@ def _build_cascade(
     for m, p in LEGACY_CASCADE:
         cascade.append(("T2", m, p, 12.0))
     return cascade
+
+
+def _resolve_local_model(local_model: str | None, require_json: bool, schema_t: tuple[str, ...]) -> str | None:
+    """Pick a local model by output contract while preserving explicit overrides."""
+    if local_model:
+        return local_model
+    if require_json and schema_t:
+        return DEFAULT_LOCAL_STRUCTURED
+    return DEFAULT_LOCAL_PRIMARY
 
 
 def _try_cache_hit(
@@ -866,7 +875,7 @@ def cheap_complete(
     if require_json and schema_t:
         eff_system = scrubbed_system + JSON_HINT + f" Required keys: {list(schema_t)}."
 
-    cascade = _build_cascade(prefer_local, model, cloud_model)
+    cascade = _build_cascade(prefer_local, _resolve_local_model(model, require_json, schema_t), cloud_model)
     attempts: list[dict] = []
     deadline = time.perf_counter() + timeout_total
 

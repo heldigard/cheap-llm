@@ -174,12 +174,16 @@ check(
 check("MODEL_PRICING has gpt-5.4-nano", "openai/gpt-5.4-nano" in cl.MODEL_PRICING)
 
 # T1 local primary stays qwen3.5:4b (2026-06-27 prune winner — best
-# universal default: 3.4GB, 81 tok/s, #3 across 5/5 ecosystem tasks).
-# Guards against accidentally reverting the local T1 to a different model.
+# free-text compatibility default). Structured JSON calls route to functiongemma.
 check(
     "T1 local primary is qwen3.5:4b",
     cl.DEFAULT_LOCAL_PRIMARY == "qwen3.5:4b",
     detail=f"got {cl.DEFAULT_LOCAL_PRIMARY}",
+)
+check(
+    "T1 local structured primary is functiongemma",
+    "functiongemma" in cl.DEFAULT_LOCAL_STRUCTURED,
+    detail=f"got {cl.DEFAULT_LOCAL_STRUCTURED}",
 )
 
 # --- CRITICAL regression: secrets are scrubbed on the prefer_local path ---
@@ -550,8 +554,8 @@ check("text mode accepts non-JSON", out["text"] == "plain text response, no JSON
 _restore_call_provider()
 
 
-# M8: prefer_local=True (the default every caller uses) → T1 qwen3.5:4b@ollama
-# is attempted FIRST and resolves there (1 attempt, no cloud call).
+# M8: prefer_local=True + schema JSON → T1 functiongemma@ollama is attempted
+# FIRST and resolves there (1 attempt, no cloud call).
 def _m8_call(model, provider, sys, prompt, timeout):
     if provider == "ollama":
         return _ok('{"category": "debug"}', provider=provider)
@@ -564,8 +568,10 @@ out = cl.cheap_complete(
     system="C.", prompt="x", schema_hint=["category"], timeout_total=15, prefer_local=True
 )
 check(
-    "prefer_local → T1 qwen3.5:4b@ollama wins first",
-    out["model"] == "qwen3.5:4b" and out["provider"] == "ollama" and out["tier"] == "T1",
+    "prefer_local schema → T1 functiongemma@ollama wins first",
+    out["model"] == cl.DEFAULT_LOCAL_STRUCTURED
+    and out["provider"] == "ollama"
+    and out["tier"] == "T1",
     detail=f"model={out['model']} provider={out['provider']} tier={out['tier']}",
 )
 check(

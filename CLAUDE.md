@@ -28,7 +28,7 @@ tests/
 ## Cascade
 
 ```
-T1 LOCAL  (free, private)    6s  — qwen3.5:4b (Ollama)
+T1 LOCAL  (free, private)    6s  — qwen3.5:4b text / functiongemma JSON (Ollama)
 T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3.1-flash-lite
                                     (OpenRouter primary, ZenMux failover)
     LEGACY safety net             — gpt-5.4-nano, deepseek-v4-flash (BYOK $0)
@@ -135,7 +135,7 @@ pattern).
 
 ## Model routing
 
-- **T1 local**: `CHEAP_LLM_LOCAL_MODEL` (default `qwen3.5:4b`) via Ollama.
+- **T1 local**: `CHEAP_LLM_LOCAL_MODEL` override; default is `qwen3.5:4b` for free text and functiongemma for schema/JSON via Ollama.
 - **T2 cloud**: cascade order is `TOP3_CASCADE` + `LEGACY_CASCADE` constants.
 - **Forced cloud model**: `cheap_complete(cloud_model="deepseek/deepseek-v4-flash")`
   for judgment-heavy tasks (1M ctx, cache-aware cost).
