@@ -192,7 +192,7 @@ def _complete_result(env: dict) -> dict:
 # Local T1 defaults. qwen3.5:4b stays the free-text compatibility default and
 # matches ollama_client.DEFAULT_GEN_MODEL. JSON/schema calls use the measured
 # structured-output specialist unless callers pass an explicit `model=...`.
-DEFAULT_LOCAL_PRIMARY = "qwen3.5:4b"
+DEFAULT_LOCAL_PRIMARY = "cryptidbleh/gemma4-claude-opus-4.6:latest"
 DEFAULT_LOCAL_STRUCTURED = "SetneufPT/Qwopus3.5-4B-Coder-MTP_Q4_64k_8GB-GPU:latest"
 
 # T1 budget when the local model is NOT loaded in VRAM yet (cold start).

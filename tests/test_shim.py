@@ -19,7 +19,7 @@ if not callable(mod.require):
     errors.append("require not callable")
 if mod.__version__ != mod.require():
     errors.append(f"__version__ {mod.__version__} != require() {mod.require()}")
-if mod.DEFAULT_LOCAL_PRIMARY != "qwen3.5:4b":
+if mod.DEFAULT_LOCAL_PRIMARY != "cryptidbleh/gemma4-claude-opus-4.6:latest":
     errors.append(f"DEFAULT_LOCAL_PRIMARY={mod.DEFAULT_LOCAL_PRIMARY}")
 if "Qwopus" not in mod.DEFAULT_LOCAL_STRUCTURED:
     errors.append(f"DEFAULT_LOCAL_STRUCTURED={mod.DEFAULT_LOCAL_STRUCTURED}")

@@ -177,7 +177,7 @@ check("MODEL_PRICING has gpt-5.4-nano", "openai/gpt-5.4-nano" in cl.MODEL_PRICIN
 # free-text compatibility default). Structured JSON calls route to functiongemma.
 check(
     "T1 local primary is qwen3.5:4b",
-    cl.DEFAULT_LOCAL_PRIMARY == "qwen3.5:4b",
+    cl.DEFAULT_LOCAL_PRIMARY == "cryptidbleh/gemma4-claude-opus-4.6:latest",
     detail=f"got {cl.DEFAULT_LOCAL_PRIMARY}",
 )
 check(
