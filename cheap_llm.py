@@ -251,6 +251,30 @@ ZENMUX_URL = "https://zenmux.ai/api/v1"
 DEEPSEEK_URL = "https://api.deepseek.com/v1"
 OLLAMA_URL = "http://localhost:11434"
 
+
+def _strip_ollama_reasoning(text: str) -> str:
+    """Conservatively remove recoverable local reasoning traces."""
+    if not text:
+        return ""
+    text = re.sub(r"<think\b[^>]*>.*?(</think\s*>|$)", "", text, flags=re.S | re.I)
+    text = re.sub(r"<reasoning\b[^>]*>.*?(</reasoning\s*>|$)", "", text, flags=re.S | re.I)
+    text = re.sub(r"<reflection\b[^>]*>.*?(</reflection\s*>|$)", "", text, flags=re.S | re.I)
+    text = re.sub(r"<output\b[^>]*>(.*?)</output\s*>", r"\1", text, flags=re.S | re.I)
+    text = re.sub(r"<\|channel\|>.*?(<\|channel\|>|$)", "", text, flags=re.S | re.I)
+    visible = re.search(
+        r"^\s*(thinking process|let me think)[: ].*?(final answer|answer|output)\s*:\s*",
+        text,
+        flags=re.S | re.I,
+    )
+    if visible:
+        text = text[visible.end():]
+    else:
+        low = text.lstrip().lower()
+        if low.startswith(("thinking process:", "let me think:")):
+            parts = re.split(r"\n\s*\n", text.strip(), maxsplit=1)
+            text = parts[1] if len(parts) == 2 else ""
+    return text.strip()
+
 # Cascade as (model, provider) pairs. For each top model we try OpenRouter
 # first, then ZenMux as backup. DeepInfra is intentionally NOT in the cascade
 # for the ling/gemini top-3 because (a) it doesn't host ling-2.6 models,
@@ -431,6 +455,7 @@ def _call_ollama(model: str, system: str, prompt: str, timeout: float) -> dict:
         "model": model,
         "prompt": f"{system}\n\n{prompt}",
         "stream": False,
+        "think": False,
         "options": {"temperature": 0.1, "num_ctx": num_ctx},
     }
     req = urllib.request.Request(
@@ -443,7 +468,7 @@ def _call_ollama(model: str, system: str, prompt: str, timeout: float) -> dict:
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     return {
-        "text": body.get("response", "").strip(),
+        "text": _strip_ollama_reasoning(str(body.get("response", "")).strip()),
         "latency": latency,
         "input_tokens": body.get("prompt_eval_count", 0),
         "output_tokens": body.get("eval_count", 0),
