@@ -96,7 +96,7 @@ from pathlib import Path
 #   - MAJOR = removed/renamed public param or RESULT_KEY (consumers' require() gate trips)
 #   - MINOR = additive (new param with default, new RESULT_KEY, new public fn)
 #   - PATCH = internal refactor, model/cascade changes, bug fixes
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -194,6 +194,27 @@ def _complete_result(env: dict) -> dict:
 # structured-output specialist unless callers pass an explicit `model=...`.
 DEFAULT_LOCAL_PRIMARY = "qwen3.5:4b"
 DEFAULT_LOCAL_STRUCTURED = "hf.co/slyfox1186/qwen3.5-9b-opus-4.6-functiongemma.gguf:Q4_K_M"
+
+# T1 budget when the local model is NOT loaded in VRAM yet (cold start).
+# Warm budgets stay 6s/12s; eff_timeout always clamps to the caller's
+# timeout_total, so callers with tight deadlines are unaffected.
+LOCAL_COLD_TIMEOUT = float(os.environ.get("CHEAP_LLM_LOCAL_COLD_TIMEOUT", "25"))
+
+
+def _ollama_model_loaded(model: str) -> bool:
+    """True if `model` is currently loaded (GET /api/ps). Unknown -> assume warm."""
+    try:
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/ps", method="GET")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        # Ollama down or unreadable: keep the fast budget — a dead server
+        # fails the T1 attempt instantly anyway.
+        return True
+    models = data.get("models") or []
+    return any(model in {m.get("name"), m.get("model")} for m in models if isinstance(m, dict))
+
+
 # Cascade order (2026-06-19 round 3, top 5 cloud + 1 local).
 # CORRECTED PRICING (per OpenRouter's own listing — the API's usage.cost
 # field returns $0 for some models in preview/promo but the public list
@@ -265,13 +286,14 @@ def _strip_ollama_reasoning(text: str) -> str:
         flags=re.S | re.I,
     )
     if visible:
-        text = text[visible.end():]
+        text = text[visible.end() :]
     else:
         low = text.lstrip().lower()
         if low.startswith(("thinking process:", "let me think:")):
             parts = re.split(r"\n\s*\n", text.strip(), maxsplit=1)
             text = parts[1] if len(parts) == 2 else ""
     return text.strip()
+
 
 # Cascade as (model, provider) pairs. For each top model we try OpenRouter
 # first, then ZenMux as backup. DeepInfra is intentionally NOT in the cascade
@@ -729,6 +751,13 @@ def _build_cascade(
         # resolve FREE + PRIVATE, leaving only heavier extract/review to cloud.
         resolved = local_model or DEFAULT_LOCAL_PRIMARY
         local_timeout = 12.0 if resolved == DEFAULT_LOCAL_STRUCTURED else 6.0
+        if not _ollama_model_loaded(resolved):
+            # Cold start: the first call of a session must not silently leak
+            # to cloud PAYG just because the local model needs to load into
+            # VRAM (observed 2026-07-08: warm T1 answers in <6s, cold falls
+            # to T2). eff_timeout still clamps to the caller's timeout_total,
+            # so tight-budget hooks keep their own ceiling.
+            local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
         cascade.append(("T1", resolved, "ollama", local_timeout))
     if cloud_model:
         if cloud_model.startswith("deepseek/"):
@@ -743,7 +772,9 @@ def _build_cascade(
     return cascade
 
 
-def _resolve_local_model(local_model: str | None, require_json: bool, schema_t: tuple[str, ...]) -> str | None:
+def _resolve_local_model(
+    local_model: str | None, require_json: bool, schema_t: tuple[str, ...]
+) -> str | None:
     """Pick a local model by output contract while preserving explicit overrides."""
     if local_model:
         return local_model
@@ -875,7 +906,8 @@ def cheap_complete(
     if require_json and schema_t:
         eff_system = scrubbed_system + JSON_HINT + f" Required keys: {list(schema_t)}."
 
-    cascade = _build_cascade(prefer_local, _resolve_local_model(model, require_json, schema_t), cloud_model)
+    local_model = _resolve_local_model(model, require_json, schema_t)
+    cascade = _build_cascade(prefer_local, local_model, cloud_model)
     attempts: list[dict] = []
     deadline = time.perf_counter() + timeout_total
 

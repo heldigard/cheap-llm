@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cheap-llm"
-version = "1.1.1"
+version = "1.1.2"
 description = "Unified cheap-LLM cascade client for preprocessor slots. T1 local (Ollama) → T2 cloud (ling/gemini/gpt-nano) with cross-provider failover, secret scrub, JSON contract, and a versioned public API (SemVer + require() gate) for decoupled ecosystem consumers. Graduated from ~/.claude/scripts/cheap_llm.py."
 readme = "README.md"
 requires-python = ">=3.11"

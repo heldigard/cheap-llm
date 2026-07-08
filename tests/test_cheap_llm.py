@@ -696,6 +696,26 @@ check(
     detail=f"got {providers}",
 )
 
+# cold-start T1 budget: model not loaded -> extended timeout; warm -> fast
+_orig_loaded = cl._ollama_model_loaded
+try:
+    cl._ollama_model_loaded = lambda m: False
+    cold = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
+    check(
+        "cascade cold T1: extended budget (>= LOCAL_COLD_TIMEOUT)",
+        cold[0][3] >= cl.LOCAL_COLD_TIMEOUT,
+        detail=f"timeout={cold[0][3]}",
+    )
+    cl._ollama_model_loaded = lambda m: True
+    warm = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
+    check(
+        "cascade warm T1: fast budget (6s primary)",
+        warm[0][3] == 6.0,
+        detail=f"timeout={warm[0][3]}",
+    )
+finally:
+    cl._ollama_model_loaded = _orig_loaded
+
 # prefer_local=False + cloud_model=None → only T2 cloud tiers
 cascade_cloud_only = cl._build_cascade(prefer_local=False, local_model=None, cloud_model=None)
 check(
