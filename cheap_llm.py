@@ -25,7 +25,7 @@ first success wins. Build by cheap_complete() from DEFAULT_LOCAL_PRIMARY +
 TOP3_CASCADE + LEGACY_CASCADE (see those constants for the live order):
 
   T1 LOCAL (free, private)        timeout 6s  — qwen3.5:4b for text,
-                                                    functiongemma for JSON/schema
+                                                    SetneufPT for JSON/schema
   T2 CHEAP CLOUD                  timeout 12s — TOP3_CASCADE:
       ling-2.6-flash @ openrouter → zenmux      ($0.01/$0.03 per M)
       ling-2.6-1t    @ openrouter → zenmux      ($0.075/$0.625 per M)
@@ -193,7 +193,7 @@ def _complete_result(env: dict) -> dict:
 # matches ollama_client.DEFAULT_GEN_MODEL. JSON/schema calls use the measured
 # structured-output specialist unless callers pass an explicit `model=...`.
 DEFAULT_LOCAL_PRIMARY = "qwen3.5:4b"
-DEFAULT_LOCAL_STRUCTURED = "hf.co/slyfox1186/qwen3.5-9b-opus-4.6-functiongemma.gguf:Q4_K_M"
+DEFAULT_LOCAL_STRUCTURED = "SetneufPT/Qwopus3.5-4B-Coder-MTP_Q4_64k_8GB-GPU:latest"
 
 # T1 budget when the local model is NOT loaded in VRAM yet (cold start).
 # Warm budgets stay 6s/12s; eff_timeout always clamps to the caller's

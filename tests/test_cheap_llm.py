@@ -181,8 +181,8 @@ check(
     detail=f"got {cl.DEFAULT_LOCAL_PRIMARY}",
 )
 check(
-    "T1 local structured primary is functiongemma",
-    "functiongemma" in cl.DEFAULT_LOCAL_STRUCTURED,
+    "T1 local structured primary is SetneufPT/Qwopus",
+    "Qwopus" in cl.DEFAULT_LOCAL_STRUCTURED,
     detail=f"got {cl.DEFAULT_LOCAL_STRUCTURED}",
 )
 
