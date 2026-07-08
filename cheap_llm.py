@@ -24,7 +24,7 @@ Cascade (T1 → T2 cloud with cross-provider failover), tried in order,
 first success wins. Build by cheap_complete() from DEFAULT_LOCAL_PRIMARY +
 TOP3_CASCADE + LEGACY_CASCADE (see those constants for the live order):
 
-  T1 LOCAL (free, private)        timeout 6s  — qwen3.5:4b for text,
+  T1 LOCAL (free, private)        timeout 6s  — cryptidbleh/gemma4-claude-opus-4.6 for text,
                                                     SetneufPT for JSON/schema
   T2 CHEAP CLOUD                  timeout 12s — TOP3_CASCADE:
       ling-2.6-flash @ openrouter → zenmux      ($0.01/$0.03 per M)
@@ -189,7 +189,7 @@ def _complete_result(env: dict) -> dict:
     return env
 
 
-# Local T1 defaults. qwen3.5:4b stays the free-text compatibility default and
+# Local T1 defaults. cryptidbleh/gemma4-claude-opus-4.6 is the free-text compatibility default and
 # matches ollama_client.DEFAULT_GEN_MODEL. JSON/schema calls use the measured
 # structured-output specialist unless callers pass an explicit `model=...`.
 DEFAULT_LOCAL_PRIMARY = "cryptidbleh/gemma4-claude-opus-4.6:latest"
