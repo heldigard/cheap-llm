@@ -726,6 +726,89 @@ check(
 
 
 # =================================================================
+# UNIT: local-only and model normalization additions (2026-07-08)
+# =================================================================
+print("\n=== UNIT: local-only and model normalization ===")
+
+# Test _normalize_model_name
+check(
+    "normalize: empty or None returns empty",
+    cl._normalize_model_name(None) == "" and cl._normalize_model_name("") == ""
+)
+check(
+    "normalize: adds latest suffix when missing",
+    cl._normalize_model_name("my-model") == "my-model:latest"
+)
+check(
+    "normalize: keeps existing suffix",
+    cl._normalize_model_name("my-model:v2") == "my-model:v2"
+)
+check(
+    "normalize: trims whitespace",
+    cl._normalize_model_name("  my-model:latest  ") == "my-model:latest"
+)
+
+# Test _ollama_model_loaded tag normalization
+_orig_urlopen_norm = _urlreq.urlopen
+_ps_payload = {
+    "models": [
+        {"name": "some-model:latest", "model": "some-model:latest"},
+        {"name": "another-model:v1", "model": "another-model:v1"},
+    ]
+}
+_urlreq.urlopen = _fake_urlopen_factory(_ps_payload)
+try:
+    check(
+        "model loaded matches exact with tag",
+        cl._ollama_model_loaded("some-model:latest") is True
+    )
+    check(
+        "model loaded matches normalized tagless",
+        cl._ollama_model_loaded("some-model") is True
+    )
+    check(
+        "model loaded matches exact with tag (another-model)",
+        cl._ollama_model_loaded("another-model:v1") is True
+    )
+    check(
+        "model loaded tagless fails for tag v1 model",
+        cl._ollama_model_loaded("another-model") is False
+    )
+    check(
+        "non-loaded model returns False",
+        cl._ollama_model_loaded("missing-model") is False
+    )
+finally:
+    _urlreq.urlopen = _orig_urlopen_norm
+
+# Test CHEAP_LLM_LOCAL_ONLY cascade behavior
+_orig_local_only = os.environ.get("CHEAP_LLM_LOCAL_ONLY")
+try:
+    os.environ["CHEAP_LLM_LOCAL_ONLY"] = "1"
+    cascade_lo = cl._build_cascade(
+        prefer_local=False, local_model="test-model", cloud_model="some-cloud"
+    )
+    check(
+        "local_only forces T1 only and ignores cloud models",
+        len(cascade_lo) == 1 and cascade_lo[0][0] == "T1" and cascade_lo[0][1] == "test-model",
+        detail=f"cascade={cascade_lo}"
+    )
+
+    # local_only with prefer_local=True and cloud_model=None
+    cascade_lo_2 = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
+    check(
+        "local_only restricts normal cascade to T1 only",
+        len(cascade_lo_2) == 1 and cascade_lo_2[0][0] == "T1",
+        detail=f"cascade={cascade_lo_2}"
+    )
+finally:
+    if _orig_local_only is not None:
+        os.environ["CHEAP_LLM_LOCAL_ONLY"] = _orig_local_only
+    else:
+        os.environ.pop("CHEAP_LLM_LOCAL_ONLY", None)
+
+
+# =================================================================
 # CLI: --probe works standalone (regression 2026-07-02: --system/--prompt
 # were required=True, so the documented `cheap_llm.py --probe` exited 2)
 # =================================================================

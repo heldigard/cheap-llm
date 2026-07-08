@@ -201,8 +201,18 @@ DEFAULT_LOCAL_STRUCTURED = "SetneufPT/Qwopus3.5-4B-Coder-MTP_Q4_64k_8GB-GPU:late
 LOCAL_COLD_TIMEOUT = float(os.environ.get("CHEAP_LLM_LOCAL_COLD_TIMEOUT", "25"))
 
 
+def _normalize_model_name(name: str | None) -> str:
+    if not name:
+        return ""
+    name = name.strip()
+    if ":" not in name:
+        name = f"{name}:latest"
+    return name
+
+
 def _ollama_model_loaded(model: str) -> bool:
     """True if `model` is currently loaded (GET /api/ps). Unknown -> assume warm."""
+    norm_target = _normalize_model_name(model)
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/ps", method="GET")
         with urllib.request.urlopen(req, timeout=1.5) as resp:
@@ -212,7 +222,14 @@ def _ollama_model_loaded(model: str) -> bool:
         # fails the T1 attempt instantly anyway.
         return True
     models = data.get("models") or []
-    return any(model in {m.get("name"), m.get("model")} for m in models if isinstance(m, dict))
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        for key in ("name", "model"):
+            val = m.get(key)
+            if val and _normalize_model_name(val) == norm_target:
+                return True
+    return False
 
 
 # Cascade order (2026-06-19 round 3, top 5 cloud + 1 local).
@@ -267,7 +284,7 @@ ZENMUX_URL = "https://zenmux.ai/api/v1"
 # saving OpenRouter obscures. Caveat: DeepSeek retains data for training;
 # scrub_secrets (always applied) keeps it safe for non-secret prep work.
 DEEPSEEK_URL = "https://api.deepseek.com/v1"
-OLLAMA_URL = "http://localhost:11434"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
 
 def _strip_ollama_reasoning(text: str) -> str:
@@ -759,6 +776,19 @@ def _build_cascade(
             # so tight-budget hooks keep their own ceiling.
             local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
         cascade.append(("T1", resolved, "ollama", local_timeout))
+    local_only = (
+        os.environ.get("CHEAP_LLM_LOCAL_ONLY", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    if local_only:
+        if not cascade:
+            resolved = local_model or DEFAULT_LOCAL_PRIMARY
+            local_timeout = 12.0 if resolved == DEFAULT_LOCAL_STRUCTURED else 6.0
+            if not _ollama_model_loaded(resolved):
+                local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
+            cascade.append(("T1", resolved, "ollama", local_timeout))
+        return cascade
+
     if cloud_model:
         if cloud_model.startswith("deepseek/"):
             cascade.append(("T2", cloud_model, "deepseek", 18.0))

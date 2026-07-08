@@ -224,8 +224,9 @@ def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> d
         "stream": False,
         "options": {"temperature": 0.1, "num_ctx": 8192},
     }
+    url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/") + "/api/generate"
     req = urllib.request.Request(
-        "http://localhost:11434/api/generate",
+        url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
