@@ -57,6 +57,11 @@ def skip(name: str, reason: str) -> None:
     print(f"  SKIP  {name}  ({reason})")
 
 
+def synthetic_secret(*parts: str) -> str:
+    """Build detector-shaped fixtures without storing complete secrets in source."""
+    return "".join(parts)
+
+
 # =================================================================
 # UNIT: pure functions, no network, no mocks
 # =================================================================
@@ -90,23 +95,36 @@ check("validate zero accepted", cl._validate({"a": 0}, ("a",)) is True)
 # scrub_secrets
 check(
     "scrub api_key assignment",
-    "REDACTED" in cl.scrub_secrets('api_key = "abcdef1234567890"'),
+    "REDACTED" in cl.scrub_secrets('api_key = "' + synthetic_secret("abcdef", "1234567890") + '"'),
     detail="expected REDACTED in scrubbed output",
 )
 check(
     "scrub Bearer token",
-    cl.scrub_secrets("Authorization: Bearer abc123def456ghi789jkl012")
+    cl.scrub_secrets("Authorization: Bearer " + synthetic_secret("abc123def456", "ghi789jkl012"))
     == "Authorization: Bearer <REDACTED_TOKEN>",
 )
-check("scrub sk- key", "REDACTED_SK" in cl.scrub_secrets("my key is sk-proj1234567890abcdefghij"))
+check(
+    "scrub sk- key",
+    "REDACTED_SK"
+    in cl.scrub_secrets("my key is " + synthetic_secret("sk-proj", "1234567890abcdefghij")),
+)
 check(
     "scrub ghp_ key",
-    "REDACTED_GH" in cl.scrub_secrets("token: ghp_abcdefghijklmnopqrstuvwxyz0123456789AB"),
+    "REDACTED_GH"
+    in cl.scrub_secrets(
+        "token: " + synthetic_secret("ghp_", "abcdefghijklmnopqrstuvwxyz0123456789AB")
+    ),
 )
 check(
     "scrub JWT",
     "REDACTED_JWT"
-    in cl.scrub_secrets("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature_abc123"),
+    in cl.scrub_secrets(
+        synthetic_secret(
+            "eyJhbGciOiJIUzI1NiJ9",
+            ".eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+            ".signature_abc123",
+        )
+    ),
 )
 check(
     "scrub non-secrets unchanged",
@@ -240,28 +258,60 @@ check(
 print("\n=== UNIT: secret scrub coverage ===")
 
 SCRUB_CASES = [
-    ("bearer", "Authorization: Bearer abc123def456ghi789jkl012", "REDACTED_TOKEN"),
+    (
+        "bearer",
+        "Authorization: Bearer " + synthetic_secret("abc123def456", "ghi789jkl012"),
+        "REDACTED_TOKEN",
+    ),
     ("postgres conn string", "db=postgres://admin:SuperSecret123@db:5432/x", "REDACTED_USER"),
     ("mongodb conn string", "MONGO=mongodb://u:S3cret%40p@cluster:27017", "REDACTED_USER"),
     ("redis conn string", "redis://default:hunter2@redis:6379", "REDACTED_USER"),
     (
         "PEM block",
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----",
+        synthetic_secret(
+            "-----BEGIN RSA ",
+            "PRIVATE KEY-----\n",
+            "MIIEpAIBAAKCAQEA\n",
+            "-----END RSA ",
+            "PRIVATE KEY-----",
+        ),
         "REDACTED_PEM_KEY",
     ),
-    ("PEM dangling begin", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNz", "REDACTED_PEM_KEY"),
-    ("AWS AKIA", "aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "REDACTED_AWS"),
-    ("Google AIza", "key = AIzaSyA1234567890abcdefghijklmnopqrstuv", "REDACTED_GCP"),
-    ("GitHub ghp_", "token: ghp_abcdefghijklmnopqrstuvwxyz0123456789AB", "REDACTED_GH"),
     (
-        "GitHub PAT",
-        "GITHUB_PAT=github_pat_11ABCDEFGHIJKLMNOPQRSTUVWXabcdefghijklmnopqrstuvwxyz",
+        "PEM dangling begin",
+        synthetic_secret("-----BEGIN OPENSSH ", "PRIVATE KEY-----\n", "b3BlbnNz"),
+        "REDACTED_PEM_KEY",
+    ),
+    ("AWS AKIA", "aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "REDACTED_AWS"),
+    (
+        "Google AIza",
+        "key = " + synthetic_secret("AIzaSyA", "1234567890abcdefghijklmnopqrstuv"),
+        "REDACTED_GCP",
+    ),
+    (
+        "GitHub ghp_",
+        "token: " + synthetic_secret("ghp_", "abcdefghijklmnopqrstuvwxyz0123456789AB"),
         "REDACTED_GH",
     ),
-    ("Stripe", "stripe: sk_test_51HqabcdefGHIJKLMN0123456789abcd", "REDACTED_STRIPE"),
+    (
+        "GitHub PAT",
+        "GITHUB_PAT="
+        + synthetic_secret("github_pat_", "11ABCDEFGHIJKLMNOPQRSTUVWXabcdefghijklmnopqrstuvwxyz"),
+        "REDACTED_GH",
+    ),
+    (
+        "Stripe",
+        "stripe: " + synthetic_secret("sk_test_", "51HqabcdefGHIJKLMN0123456789abcd"),
+        "REDACTED_STRIPE",
+    ),
     (
         "JWT",
-        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJsignature1234567",
+        "jwt "
+        + synthetic_secret(
+            "eyJhbGciOiJIUzI1NiJ9",
+            ".eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+            ".SflKxwRJsignature1234567",
+        ),
         "REDACTED_JWT",
     ),
 ]
