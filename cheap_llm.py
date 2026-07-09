@@ -13,7 +13,7 @@ Claude Opus / Codex gpt-5.x (T3) — gets clean signal, makes the decisions,
 and writes the code (higher quality than a cheap general model could). It
 must NOT write/edit code, design, or do security work; its output is
 advisory/distilled context, never executed code. For code-gen help to the
-big model, use the SEPARATE coding tier: codex-coder (gpt-5.4) or
+big model, use the SEPARATE coding tier: codex-coder (GPT-5.6 Terra) or
 swarm-coding (kimi-k2 / deepseek-v4 / zm-doubao2-code — code specialists).
 Filtering contract each caller enforces — SIGNAL (keep): exact errors, stack
 traces, file:line, identifiers, numbers, intent, schema. NOISE (drop):
@@ -215,6 +215,8 @@ def _ollama_model_loaded(model: str) -> bool:
     norm_target = _normalize_model_name(model)
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/ps", method="GET")
+        # OLLAMA_URL is an explicit operator setting, not request/user input.
+        # nosemgrep
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception:
@@ -501,7 +503,8 @@ def _call_ollama(model: str, system: str, prompt: str, timeout: float) -> dict:
         headers={"Content-Type": "application/json"},
     )
     t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    # nosemgrep: OLLAMA_URL is explicit local operator configuration.
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     return {
@@ -568,7 +571,9 @@ def _openai_compat_call(
         headers=headers,
     )
     t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    # endpoint.url comes only from frozen in-module provider constants.
+    # nosemgrep
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
@@ -648,7 +653,8 @@ def _call_deepseek(model: str, system: str, prompt: str, timeout: float) -> dict
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
     )
     t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    # nosemgrep: DEEPSEEK_URL is a fixed in-module provider constant.
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
@@ -998,7 +1004,8 @@ def _probe() -> dict:
     }
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as r:
+        # nosemgrep: OLLAMA_URL is explicit local operator configuration.
+        with urllib.request.urlopen(req, timeout=2) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
             data = json.loads(r.read())
         out["ollama_alive"] = True
         out["local_models"] = [

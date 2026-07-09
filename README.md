@@ -45,7 +45,7 @@ out = cheap_complete(
 
 | Tier | Model | Provider | Cost (per M tokens) | Timeout |
 |------|-------|----------|---------------------|---------|
-| T1 | qwen3.5:4b text / functiongemma JSON | Ollama (local) | $0 | 6s |
+| T1 | cryptidbleh/gemma4-claude-opus-4.6 (text) / SetneufPT/Qwopus3.5-4B-Coder-MTP (JSON/schema) | Ollama (local) | $0 | 6s |
 | T2 | ling-2.6-flash | OpenRouter → ZenMux | $0.01/$0.03 | 12s |
 | T2 | ling-2.6-1t | OpenRouter → ZenMux | $0.075/$0.625 | 12s |
 | T2 | gemini-3.1-flash-lite | OpenRouter → ZenMux | $0.25/$1.50 | 12s |

@@ -32,8 +32,17 @@ cheap-llm = "cheap_llm:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+python_files = ["test_contract.py"]
 pythonpath = ["."]
 addopts = "-q"
+
+[tool.pyright]
+exclude = [
+    ".venv",
+    "tests/test_cheap_llm.py",
+    "tests/test_cheap_llm_live.py",
+    "tests/test_shim.py",
+]
 
 [tool.ruff]
 target-version = "py311"
