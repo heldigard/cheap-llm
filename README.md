@@ -57,11 +57,11 @@ Cross-provider failover: OpenRouter primary, ZenMux backup per model.
 ## Testing
 
 ```bash
-# Unit + mocked (101 tests, offline, no API keys needed)
+# Behavioral + mocked suite (offline, no API keys needed)
 python3 tests/test_cheap_llm.py
 
-# Public-API contract gate (SemVer + signature + return shape + require())
-python3 tests/test_contract.py
+# Pytest contract gates (public API/SemVer + ecosystem shim)
+python3 -m pytest -q
 
 # Live + E2E (real API calls, opt-in)
 python3 tests/test_cheap_llm_live.py --live

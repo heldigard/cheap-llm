@@ -21,14 +21,17 @@ context, never executed code.
 cheap_llm.py          core module — cascade, transport, scrub, cache, CLI
 cheap_bench.py        benchmark harness (self-contained transport layer)
 tests/
-  test_cheap_llm.py       unit + mocked tests (101 tests, offline, no network)
+  test_cheap_llm.py       behavioral + mocked suite (offline, no network)
+  test_contract.py        pytest public API/SemVer contract gate
+  test_shim.py            pytest ecosystem-shim contract gate
   test_cheap_llm_live.py  live + E2E tests (real API calls, opt-in via --live)
 ```
 
 ## Cascade
 
 ```
-T1 LOCAL  (free, private)    6s  — qwen3.5:4b text / functiongemma JSON (Ollama)
+T1 LOCAL  (free, private)    6s  — cryptidbleh/gemma4-claude-opus-4.6 text /
+                                    SetneufPT/Qwopus structured JSON (Ollama)
 T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3.1-flash-lite
                                     (OpenRouter primary, ZenMux failover)
     LEGACY safety net             — gpt-5.4-nano, deepseek-v4-flash (BYOK $0)
@@ -128,14 +131,17 @@ pattern).
 
 ## Commands
 
-- Test (offline): `python3 tests/test_cheap_llm.py`
+- Test (offline behavior): `python3 tests/test_cheap_llm.py`
+- Test (contract + shim): `python3 -m pytest -q`
 - Test (live): `python3 tests/test_cheap_llm_live.py --live`
 - Bench: `python3 cheap_bench.py`
 - Lint: `ruff check .`
 
 ## Model routing
 
-- **T1 local**: `CHEAP_LLM_LOCAL_MODEL` override; default is `qwen3.5:4b` for free text and functiongemma for schema/JSON via Ollama.
+- **T1 local**: `CHEAP_LLM_LOCAL_MODEL` override; default is
+  `cryptidbleh/gemma4-claude-opus-4.6:latest` for free text and
+  `SetneufPT/Qwopus3.5-4B-Coder-MTP` for schema/JSON via Ollama.
 - **T2 cloud**: cascade order is `TOP3_CASCADE` + `LEGACY_CASCADE` constants.
 - **Forced cloud model**: `cheap_complete(cloud_model="deepseek/deepseek-v4-flash")`
   for judgment-heavy tasks (1M ctx, cache-aware cost).

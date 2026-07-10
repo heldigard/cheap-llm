@@ -25,12 +25,14 @@ import urllib.error
 import urllib.request as _urlreq
 from dataclasses import fields as _dc_fields
 from pathlib import Path
+from typing import Any, cast
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 _spec = importlib.util.spec_from_file_location("cheap_llm", PROJECT_ROOT / "cheap_llm.py")
-cl = importlib.util.module_from_spec(_spec)
+assert _spec and _spec.loader
+cl: Any = importlib.util.module_from_spec(_spec)
 sys.modules["cheap_llm"] = cl  # needed so @dataclass can resolve cls.__module__
 _spec.loader.exec_module(cl)
 
@@ -191,10 +193,9 @@ check(
 )
 check("MODEL_PRICING has gpt-5.4-nano", "openai/gpt-5.4-nano" in cl.MODEL_PRICING)
 
-# T1 local primary stays qwen3.5:4b (2026-06-27 prune winner — best
-# free-text compatibility default). Structured JSON calls route to functiongemma.
+# T1 free-text compatibility and structured JSON defaults stay explicit.
 check(
-    "T1 local primary is qwen3.5:4b",
+    "T1 local primary is cryptidbleh/gemma4-claude-opus-4.6",
     cl.DEFAULT_LOCAL_PRIMARY == "cryptidbleh/gemma4-claude-opus-4.6:latest",
     detail=f"got {cl.DEFAULT_LOCAL_PRIMARY}",
 )
@@ -373,7 +374,7 @@ check("reported cost (>0) returned as-is", abs(rep - 0.000123) < 1e-12, detail=f
 print("\n=== MOCKED: cascade with stubbed providers ===")
 
 
-def _stub_cascade(provider_results: dict[str, list]):
+def _stub_cascade(provider_results: dict[tuple[str, str], list[Any]]):
     """Returns (call_log, real_call_fn). Stashes the REAL _call_provider so
     the test can restore it via the returned real_call_fn.
     """
@@ -455,7 +456,9 @@ _restore_call_provider()
 # M2: OpenRouter down on ling-2.6-flash, ZenMux catches
 def _m2_call(model, provider, sys, prompt, timeout):
     if model == "inclusionai/ling-2.6-flash" and provider == "openrouter":
-        raise urllib.error.HTTPError("https://x", 503, "Service Unavailable", {}, None)
+        raise urllib.error.HTTPError(
+            "https://x", 503, "Service Unavailable", cast(Any, {}), None
+        )
     if model == "inclusionai/ling-2.6-flash" and provider == "zenmux":
         return _ok('{"category": "debug"}', provider=provider)
     return _ok('{"category": "should not reach"}', provider=provider)
@@ -604,7 +607,7 @@ check("text mode accepts non-JSON", out["text"] == "plain text response, no JSON
 _restore_call_provider()
 
 
-# M8: prefer_local=True + schema JSON → T1 functiongemma@ollama is attempted
+# M8: prefer_local=True + schema JSON -> configured structured T1 is attempted
 # FIRST and resolves there (1 attempt, no cloud call).
 def _m8_call(model, provider, sys, prompt, timeout):
     if provider == "ollama":
@@ -618,7 +621,7 @@ out = cl.cheap_complete(
     system="C.", prompt="x", schema_hint=["category"], timeout_total=15, prefer_local=True
 )
 check(
-    "prefer_local schema → T1 functiongemma@ollama wins first",
+    "prefer_local schema -> structured T1@ollama wins first",
     out["model"] == cl.DEFAULT_LOCAL_STRUCTURED
     and out["provider"] == "ollama"
     and out["tier"] == "T1",

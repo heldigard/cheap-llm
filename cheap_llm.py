@@ -61,10 +61,10 @@ Usage (CLI):
         --schema field1 field2
     python3 cheap_llm.py --probe   # show what's available
 
-Decisions (2026-06-27, local-model-pruning — qwen3.5:4b promoted over gemma4:12b):
-  - qwen3.5:4b is the default local (T1): clean output, 3.4GB, 81 tok/s, matches
-    gemma4:12b's Q=2.56 compact quality at ~2× speed / 3× less VRAM. gemma4:12b
-    deleted 2026-06-27 — qwen3.5 wins on every axis for hook/preprocessor use.
+Decisions:
+  - The current free-text T1 compatibility default is
+    cryptidbleh/gemma4-claude-opus-4.6; structured calls use SetneufPT/Qwopus.
+    Keep these comments aligned with DEFAULT_LOCAL_PRIMARY/STRUCTURED below.
   - ling-2.6-flash is the primary cheap cloud (wins 4/5 tasks, $0.000018/call).
   - deepseek-v4-flash via OpenRouter BYOK is free ($0, our key) — the cascade's
     cost floor.

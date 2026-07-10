@@ -11,7 +11,7 @@ This file exercises the REAL stack:
            diff-review, extract-tool-output) run as SUBPROCESSES, proving the
            whole CLI → cascade → provider → output contract holds end to end.
 
-Cost: a few cents (≤$0.02). Time: ~1-3 min (local qwen3.5:4b is the slow part).
+Cost: a few cents (<= $0.02). Time: ~1-3 min (the local T1 call is the slow part).
 Requires: OPENROUTER_API_KEY (+ ZENMUX_API_KEY for failover tests), Ollama up.
 
 Run:
@@ -30,13 +30,15 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ECOSYSTEM_SCRIPTS = Path.home() / ".claude" / "scripts"
 sys.path.insert(0, str(PROJECT_ROOT))
 
 _spec = importlib.util.spec_from_file_location("cheap_llm", PROJECT_ROOT / "cheap_llm.py")
-cl = importlib.util.module_from_spec(_spec)
+assert _spec and _spec.loader
+cl: Any = importlib.util.module_from_spec(_spec)
 sys.modules["cheap_llm"] = cl  # needed so @dataclass can resolve cls.__module__
 _spec.loader.exec_module(cl)
 
@@ -131,7 +133,7 @@ if LIVE:
     if not (HAVE_OR or HAVE_OLLAMA):
         skip("LIVE", "all live tests", "no OPENROUTER_API_KEY and no Ollama")
     else:
-        # L1: T1 local (Ollama qwen3.5:4b) directly reachable
+        # L1: configured T1 local model directly reachable through Ollama
         if HAVE_OLLAMA:
             try:
                 r = cl._call_ollama(
@@ -140,19 +142,19 @@ if LIVE:
                 txt = r.get("text", "")
                 check(
                     "LIVE",
-                    "T1 qwen3.5:4b@ollama reachable + non-empty",
+                    "T1 local model@ollama reachable + non-empty",
                     bool(txt) and len(txt) > 5,
                     detail=f"lat={r.get('latency', 0):.1f}s out_tok={r.get('output_tokens', 0)}",
                 )
             except Exception as e:
                 check(
                     "LIVE",
-                    "T1 qwen3.5:4b@ollama reachable",
+                    "T1 local model@ollama reachable",
                     False,
                     detail=f"{type(e).__name__}: {str(e)[:70]}",
                 )
         else:
-            skip("LIVE", "T1 qwen3.5:4b@ollama reachable", "Ollama down")
+            skip("LIVE", "T1 local model@ollama reachable", "Ollama down")
 
         # L2: full cascade, prefer_local=True (the default every caller uses)
         try:
