@@ -84,7 +84,14 @@ def test_result_keys_present_on_success() -> None:
     # in the returned dict (the contract consumers rely on).
     real_provider = cl._call_provider
 
-    def fake_call(_model, provider, _system, _prompt, _timeout):
+    def fake_call(
+        model: str,
+        provider: str,
+        system: str,
+        prompt: str,
+        timeout: float,
+        max_output_tokens: int = 1024,
+    ) -> dict:
         return {"text": '{"ok": 1}', "latency": 0.1, "api_cost": 0.0, "provider": provider}
 
     cl._call_provider = fake_call

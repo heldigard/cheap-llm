@@ -136,12 +136,14 @@ check("scrub xox token", "REDACTED_XOX" in cl.scrub_secrets("slack: xoxb-12345-6
 
 # _cache_key
 k1 = cl._cache_key("m", "sys", "user", ("a",))
-k2 = cl._cache_key("m", "sys", "user", ("a",))
+k2 = cl._cache_key("m", "sys", "user", ("a",), max_output_tokens=1024)
 k3 = cl._cache_key("m", "sys", "userX", ("a",))
 k4 = cl._cache_key("m", "sys", "user", ("b",))
+k5 = cl._cache_key("m", "sys", "user", ("a",), max_output_tokens=256)
 check("cache key deterministic", k1 == k2)
 check("cache key differs on prompt", k1 != k3)
 check("cache key differs on schema", k1 != k4)
+check("cache key differs on output budget", k1 != k5)
 
 # JSON_HINT
 check("JSON hint includes 'JSON only' marker", "JSON only" in cl.JSON_HINT)
@@ -219,8 +221,10 @@ class _FakeResp(io.BytesIO):
         return None
 
 
-def _fake_urlopen_factory(body: dict):
+def _fake_urlopen_factory(body: dict, seen_payload: dict | None = None):
     def _fake(req, timeout=None):
+        if seen_payload is not None and req.data:
+            seen_payload.update(json.loads(req.data.decode()))
         return _FakeResp(json.dumps(body).encode())
 
     return _fake
@@ -235,10 +239,13 @@ _ds_body = {
     },
 }
 _orig_urlopen = _urlreq.urlopen
-_urlreq.urlopen = _fake_urlopen_factory(_ds_body)
+_ds_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(_ds_body, _ds_payload)
 try:
     os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
-    _ds = cl._call_deepseek("deepseek/deepseek-v4-flash", "s", "p", timeout=5)
+    _ds = cl._call_deepseek(
+        "deepseek/deepseek-v4-flash", "s", "p", timeout=5, max_output_tokens=384
+    )
 finally:
     _urlreq.urlopen = _orig_urlopen
 # fresh 400K @ $0.14/M + cached 600K @ $0.014/M + out 100K @ $0.28/M
@@ -251,6 +258,22 @@ check(
 check(
     "deepseek slug strips provider prefix (call succeeded)",
     _ds["text"] == "ok" and _ds["provider"] == "deepseek",
+)
+check("deepseek receives output budget", _ds_payload.get("max_tokens") == 384)
+
+# Ollama uses the equivalent num_predict option so local generation obeys the
+# same public budget as cloud transports.
+_ollama_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {"response": "ok", "prompt_eval_count": 2, "eval_count": 1}, _ollama_payload
+)
+try:
+    _ol = cl._call_ollama("local", "s", "p", timeout=5, max_output_tokens=192)
+finally:
+    _urlreq.urlopen = _orig_urlopen
+check(
+    "ollama receives output budget as num_predict",
+    _ollama_payload.get("options", {}).get("num_predict") == 192 and _ol["text"] == "ok",
 )
 
 # Reproduce the 2026-06-19 bug: prefer_local=True used to skip scrubbing, but
@@ -380,7 +403,7 @@ def _stub_cascade(provider_results: dict[tuple[str, str], list[Any]]):
     """
     log: list[tuple[str, str]] = []
 
-    def fake_call(model, provider, system, prompt, timeout):
+    def fake_call(model, provider, system, prompt, timeout, max_output_tokens):
         log.append((model, provider))
         outcomes = provider_results.get((model, provider), [])
         if outcomes:
@@ -426,10 +449,12 @@ log, _restore_unused = _stub_cascade(
         ("inclusionai/ling-2.6-flash", "openrouter"): [_ok('{"category": "debug"}')],
     }
 )
+seen_budgets: list[int] = []
 
 
-def _t1_collector(model, provider, sys, prompt, timeout):
+def _t1_collector(model, provider, sys, prompt, timeout, max_output_tokens):
     log.append((model, provider))
+    seen_budgets.append(max_output_tokens)
     return _ok('{"category": "debug"}', provider=provider)
 
 
@@ -440,6 +465,7 @@ out = cl.cheap_complete(
     schema_hint=["category"],
     timeout_total=15,
     prefer_local=False,
+    max_output_tokens=256,
 )
 check(
     "first tier succeeds → only 1 attempt",
@@ -450,11 +476,18 @@ check(
     "first tier returns ling-2.6-flash@openrouter",
     out["model"] == "inclusionai/ling-2.6-flash" and out["provider"] == "openrouter",
 )
+check("output budget reaches provider", seen_budgets == [256], detail=f"got {seen_budgets}")
+check(
+    "attempt ledger records budget and token usage",
+    out["attempts"][0]["max_output_tokens"] == 256
+    and out["attempts"][0]["input_tokens"] == 10
+    and out["attempts"][0]["output_tokens"] == 10,
+)
 _restore_call_provider()
 
 
 # M2: OpenRouter down on ling-2.6-flash, ZenMux catches
-def _m2_call(model, provider, sys, prompt, timeout):
+def _m2_call(model, provider, sys, prompt, timeout, max_output_tokens):
     if model == "inclusionai/ling-2.6-flash" and provider == "openrouter":
         raise urllib.error.HTTPError(
             "https://x", 503, "Service Unavailable", cast(Any, {}), None
@@ -483,7 +516,7 @@ _restore_call_provider()
 
 
 # M3: Both ling models fail on both providers → gemini catches
-def _m3_call(model, provider, sys, prompt, timeout):
+def _m3_call(model, provider, sys, prompt, timeout, max_output_tokens):
     if "ling" in model:
         raise RuntimeError("ling model unavailable")
     if model == "google/gemini-3.1-flash-lite" and provider == "openrouter":
@@ -531,7 +564,7 @@ _restore_call_provider()
 call_count = {"n": 0}
 
 
-def _m5_call(model, provider, sys, prompt, timeout):
+def _m5_call(model, provider, sys, prompt, timeout, max_output_tokens):
     call_count["n"] += 1
     return _ok('{"category": "debug"}')
 
@@ -554,6 +587,15 @@ out2 = cl.cheap_complete(
     prefer_local=False,
 )
 n_after_second = call_count["n"]
+cl.cheap_complete(
+    system="C.",
+    prompt="same prompt",
+    schema_hint=["category"],
+    timeout_total=15,
+    prefer_local=False,
+    max_output_tokens=256,
+)
+n_after_different_budget = call_count["n"]
 check("cache miss → 1 call", n_after_first == 1, detail=f"after first: {n_after_first}")
 check(
     "cache hit → 0 additional calls",
@@ -561,11 +603,30 @@ check(
     detail=f"after second: {n_after_second}, expected {n_after_first}",
 )
 check("cached result has cached=True", out2.get("cached") is True)
+check(
+    "different output budget bypasses incompatible cache entry",
+    n_after_different_budget == n_after_second + 1,
+)
 _restore_call_provider()
+
+# Bad budgets fail before transport/cache work and cannot silently request an
+# unbounded or nonsensical generation.
+for _bad_budget in (0, -1, True, 1.5):
+    try:
+        cl.cheap_complete(
+            system="C.",
+            prompt="x",
+            prefer_local=False,
+            require_json=False,
+            max_output_tokens=_bad_budget,  # type: ignore[arg-type]
+        )
+        check(f"reject bad output budget {_bad_budget!r}", False, detail="no ValueError")
+    except ValueError:
+        check(f"reject bad output budget {_bad_budget!r}", True)
 
 
 # M6: Invalid JSON triggers cascade fallthrough
-def _m6_call(model, provider, sys, prompt, timeout):
+def _m6_call(model, provider, sys, prompt, timeout, max_output_tokens):
     if model == "inclusionai/ling-2.6-flash":
         return _ok("not valid json at all")  # fails JSON contract
     if model == "inclusionai/ling-2.6-1t":
@@ -587,7 +648,7 @@ _restore_call_provider()
 
 
 # M7: require_json=False (text mode) accepts non-JSON
-def _m7_call(model, provider, sys, prompt, timeout):
+def _m7_call(model, provider, sys, prompt, timeout, max_output_tokens):
     if model == "inclusionai/ling-2.6-flash":
         return _ok("plain text response, no JSON")
     return _ok("not reached")
@@ -609,7 +670,7 @@ _restore_call_provider()
 
 # M8: prefer_local=True + schema JSON -> configured structured T1 is attempted
 # FIRST and resolves there (1 attempt, no cloud call).
-def _m8_call(model, provider, sys, prompt, timeout):
+def _m8_call(model, provider, sys, prompt, timeout, max_output_tokens):
     if provider == "ollama":
         return _ok('{"category": "debug"}', provider=provider)
     return _ok('{"category": "should not reach cloud"}', provider=provider)
@@ -677,11 +738,14 @@ _body_none_content = {
     "usage": {"prompt_tokens": 5, "completion_tokens": 0},
 }
 _orig_urlopen = _urlreq.urlopen
-_urlreq.urlopen = _fake_urlopen_factory(_body_none_content)
+_openrouter_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(_body_none_content, _openrouter_payload)
 try:
     os.environ["OPENROUTER_API_KEY"] = "test"
     try:
-        r = cl._call_openrouter("openai/gpt-5.4-nano", "s", "p", timeout=5)
+        r = cl._call_openrouter(
+            "openai/gpt-5.4-nano", "s", "p", timeout=5, max_output_tokens=288
+        )
         check(
             "content=None → empty text, no AttributeError",
             r["text"] == "" and r["provider"] == "openrouter",
@@ -692,6 +756,10 @@ try:
 finally:
     _urlreq.urlopen = _orig_urlopen
     del os.environ["OPENROUTER_API_KEY"]
+check(
+    "OpenAI-compatible transport receives output budget",
+    _openrouter_payload["max_tokens"] == 288,
+)
 
 # _Endpoint dataclass exists and is usable
 check("_Endpoint dataclass exists", hasattr(cl, "_Endpoint"))
@@ -896,6 +964,26 @@ check(
     "no args still errors (required pair enforced)",
     _noargs_proc.returncode == 2,
     detail=f"rc={_noargs_proc.returncode}",
+)
+_bad_budget_proc = subprocess.run(
+    [
+        sys.executable,
+        str(PROJECT_ROOT / "cheap_llm.py"),
+        "--system",
+        "s",
+        "--prompt",
+        "p",
+        "--max-tokens",
+        "0",
+    ],
+    capture_output=True,
+    text=True,
+    timeout=15,
+)
+check(
+    "CLI rejects non-positive --max-tokens before provider calls",
+    _bad_budget_proc.returncode == 2 and "positive integer" in _bad_budget_proc.stderr,
+    detail=f"rc={_bad_budget_proc.returncode} stderr={_bad_budget_proc.stderr[:120]}",
 )
 
 # =================================================================

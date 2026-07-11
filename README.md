@@ -25,6 +25,9 @@ cheap-llm --system "Classify. JSON only." --prompt "ECONNREFUSED 127.0.0.1:5432"
 
 # Full JSON envelope with field validation
 cheap-llm --system "Classify." --prompt "..." --schema category reason --json
+
+# Bound a short classifier so local and cloud providers cannot over-generate
+cheap-llm --system "Classify." --prompt "..." --schema category --max-tokens 256
 ```
 
 ## Programmatic usage
@@ -37,6 +40,7 @@ out = cheap_complete(
     prompt="I'm getting ECONNREFUSED...",
     schema_hint=["category", "reason"],
     timeout_total=20.0,
+    max_output_tokens=256,
 )
 # out: {text, model, tier, latency, cost, json_valid, fields_ok, attempts, error}
 ```
@@ -53,6 +57,21 @@ out = cheap_complete(
 | T2 | deepseek-v4-flash | OpenRouter (BYOK) | $0 | 12s |
 
 Cross-provider failover: OpenRouter primary, ZenMux backup per model.
+
+## Output budgets and usage
+
+`max_output_tokens` is a hard per-attempt ceiling shared by every transport:
+Ollama receives `num_predict`; OpenRouter, ZenMux, and DeepSeek receive
+`max_tokens`. The backward-compatible default is 1024. Callers with bounded
+contracts should choose a smaller value; `skill-router classify` uses 256 for
+its four-field JSON envelope.
+
+The budget participates in the cache key, so a short response can never be
+reused for a request that allowed a longer answer; the default 1024 namespace
+retains compatibility with existing cache entries. Response-bearing and cached
+`attempts` records include `max_output_tokens`, `input_tokens`, and
+`output_tokens`, which makes savings measurable without expanding the
+top-level result envelope.
 
 ## Testing
 
@@ -84,8 +103,8 @@ project evolves without silently breaking fusion / web-research / the 7
 
 ```python
 import cheap_llm
-cheap_llm.require("1.1")                      # trips loudly if installed < 1.1
-out = cheap_llm.cheap_complete(system=..., prompt=...)
+cheap_llm.require("1.2")                      # needed for max_output_tokens
+out = cheap_llm.cheap_complete(system=..., prompt=..., max_output_tokens=256)
 ```
 
 ## Consumers

@@ -53,6 +53,7 @@ cheap-llm --probe                              # show what's available
 cheap-llm --system "X" --prompt "Y"            # run cascade, print text
 cheap-llm --system "X" --prompt "Y" --json     # full JSON envelope
 cheap-llm --system "X" --prompt "Y" --schema f1 f2  # with field validation
+cheap-llm --system "X" --prompt "Y" --max-tokens 256 # bound every attempt
 ```
 
 ## Public API contract (SemVer) — ecosystem decoupling
@@ -81,8 +82,8 @@ project evolves without silently breaking fusion / web-research / the 7
 **Consumer adoption** (opt-in, backward compatible):
 ```python
 import cheap_llm
-cheap_llm.require("1.1")          # declare the contract floor this consumer needs
-out = cheap_llm.cheap_complete(system=..., prompt=...)
+cheap_llm.require("1.2")          # needed when using max_output_tokens
+out = cheap_llm.cheap_complete(system=..., prompt=..., max_output_tokens=256)
 ```
 `fusion` already adopts this (`judge.py::_CHEAP_LLM_MIN_VERSION`). The 7
 `~/.claude/scripts` consumers + web-research can adopt incrementally — the
@@ -128,6 +129,11 @@ pattern).
   the benchmark doesn't depend on the module it's benchmarking.
 - **Secret scrub is unconditional** — applied even on the local (Ollama) path
   because T1 frequently times out and the same prompt then reaches cloud.
+- **Callers own output budgets** — `max_output_tokens` defaults to 1024 for
+  compatibility, maps to Ollama `num_predict` and cloud `max_tokens`, and is
+  part of the cache key. Bounded classifiers/extractors should request less.
+- **Attempts are the token ledger** — live and cached attempt records include
+  the requested output ceiling plus actual input/output token counts.
 
 ## Commands
 

@@ -53,6 +53,7 @@ Usage (programmatic):
         prompt="I'm getting ECONNREFUSED...",
         schema_hint=["category", "reason"],
         timeout_total=20.0,
+        max_output_tokens=256,
     )
     # out: {text, model, latency, cost, tier, attempts, json_valid, fields_ok}
 
@@ -96,7 +97,7 @@ from pathlib import Path
 #   - MAJOR = removed/renamed public param or RESULT_KEY (consumers' require() gate trips)
 #   - MINOR = additive (new param with default, new RESULT_KEY, new public fn)
 #   - PATCH = internal refactor, model/cascade changes, bug fixes
-__version__ = "1.1.2"
+__version__ = "1.2.0"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -125,6 +126,7 @@ CHEAP_COMPLETE_PARAMS: tuple[str, ...] = (
     "require_json",
     "model",
     "cloud_model",
+    "max_output_tokens",
 )
 
 CONTRACT: dict[str, object] = {
@@ -411,7 +413,13 @@ def scrub_secrets(text: str) -> str:
 
 
 # --- Cache ----------------------------------------------------------------
-def _cache_key(model: str, system: str, prompt: str, schema: tuple[str, ...] | None) -> str:
+def _cache_key(
+    model: str,
+    system: str,
+    prompt: str,
+    schema: tuple[str, ...] | None,
+    max_output_tokens: int = 1024,
+) -> str:
     h = hashlib.sha256()
     h.update(model.encode())
     h.update(b"\0")
@@ -421,6 +429,11 @@ def _cache_key(model: str, system: str, prompt: str, schema: tuple[str, ...] | N
     h.update(b"\0")
     if schema:
         h.update("|".join(schema).encode())
+    if max_output_tokens != 1024:
+        # Preserve the pre-1.2 cache namespace for the backward-compatible
+        # default; only explicitly different budgets need a new namespace.
+        h.update(b"\0")
+        h.update(str(max_output_tokens).encode())
     return h.hexdigest()
 
 
@@ -479,7 +492,13 @@ def _resolve_cost(model: str, usage: dict, provider: str = "openrouter") -> floa
     return raw_cost
 
 
-def _call_ollama(model: str, system: str, prompt: str, timeout: float) -> dict:
+def _call_ollama(
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+    max_output_tokens: int = 1024,
+) -> dict:
     # Smaller ctx for short tasks (faster on 16GB VRAM, where memory bandwidth
     # is the bottleneck — 9B at q8 leaves little room for big KV cache).
     # Heuristic: under 4K total input chars → 2048 ctx; else 8192 or 32768 for large tasks.
@@ -495,7 +514,11 @@ def _call_ollama(model: str, system: str, prompt: str, timeout: float) -> dict:
         "prompt": f"{system}\n\n{prompt}",
         "stream": False,
         "think": False,
-        "options": {"temperature": 0.1, "num_ctx": num_ctx},
+        "options": {
+            "temperature": 0.1,
+            "num_ctx": num_ctx,
+            "num_predict": max_output_tokens,
+        },
     }
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/generate",
@@ -536,6 +559,7 @@ def _openai_compat_call(
     system: str,
     prompt: str,
     timeout: float,
+    max_output_tokens: int = 1024,
 ) -> dict:
     """Shared OpenAI-compatible chat-completions POST.
 
@@ -555,7 +579,7 @@ def _openai_compat_call(
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.1,
-        "max_tokens": 1024,
+        "max_tokens": max_output_tokens,
         "stream": False,
     }
     if model in REASONING_EFFORT_OVERRIDES:
@@ -611,15 +635,35 @@ ZENMUX_ENDPOINT = _Endpoint(
 )
 
 
-def _call_openrouter(model: str, system: str, prompt: str, timeout: float) -> dict:
-    return _openai_compat_call(OPENROUTER_ENDPOINT, model, system, prompt, timeout)
+def _call_openrouter(
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+    max_output_tokens: int = 1024,
+) -> dict:
+    return _openai_compat_call(
+        OPENROUTER_ENDPOINT, model, system, prompt, timeout, max_output_tokens
+    )
 
 
-def _call_zenmux(model: str, system: str, prompt: str, timeout: float) -> dict:
-    return _openai_compat_call(ZENMUX_ENDPOINT, model, system, prompt, timeout)
+def _call_zenmux(
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+    max_output_tokens: int = 1024,
+) -> dict:
+    return _openai_compat_call(ZENMUX_ENDPOINT, model, system, prompt, timeout, max_output_tokens)
 
 
-def _call_deepseek(model: str, system: str, prompt: str, timeout: float) -> dict:
+def _call_deepseek(
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+    max_output_tokens: int = 1024,
+) -> dict:
     """DeepSeek FIRST-PARTY call (api.deepseek.com). OpenAI-compatible.
 
     NOTE 2026-07-02: OpenRouter now lists v4-flash at $0.089/$0.18 (below the
@@ -644,7 +688,7 @@ def _call_deepseek(model: str, system: str, prompt: str, timeout: float) -> dict
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.1,
-        "max_tokens": 1024,
+        "max_tokens": max_output_tokens,
         "stream": False,
     }
     req = urllib.request.Request(
@@ -681,16 +725,23 @@ def _call_deepseek(model: str, system: str, prompt: str, timeout: float) -> dict
     }
 
 
-def _call_provider(model: str, provider: str, system: str, prompt: str, timeout: float) -> dict:
+def _call_provider(
+    model: str,
+    provider: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+    max_output_tokens: int = 1024,
+) -> dict:
     """Dispatch a (model, provider) call. Raises on transport error."""
     if provider == "ollama":
-        return _call_ollama(model, system, prompt, timeout)
+        return _call_ollama(model, system, prompt, timeout, max_output_tokens)
     elif provider == "openrouter":
-        return _call_openrouter(model, system, prompt, timeout)
+        return _call_openrouter(model, system, prompt, timeout, max_output_tokens)
     elif provider == "zenmux":
-        return _call_zenmux(model, system, prompt, timeout)
+        return _call_zenmux(model, system, prompt, timeout, max_output_tokens)
     elif provider == "deepseek":
-        return _call_deepseek(model, system, prompt, timeout)
+        return _call_deepseek(model, system, prompt, timeout, max_output_tokens)
     else:
         raise ValueError(f"unknown provider: {provider}")
 
@@ -742,12 +793,12 @@ def _validate(parsed: dict | None, schema: tuple[str, ...] | None) -> bool:
 
 
 # --- Main cascade ---------------------------------------------------------
-# vs-soft-allow — cheap_complete signature has 8 kwargs (system, prompt,
-# schema_hint, timeout_total, prefer_local, require_json, model, cloud_model).
-# These are the cascade resolver's feature toggles; the 8 consumer scripts in
-# ~/.claude/scripts/ (commit-draft, diff-review, error-classify,
-# extract-tool-output, intent_route, pdf-extract-structured, pr-draft,
-# test-triage) depend on this exact public signature.
+# vs-soft-allow — cheap_complete signature has 9 kwargs (system, prompt,
+# schema_hint, timeout_total, prefer_local, require_json, model, cloud_model,
+# max_output_tokens). These are the cascade resolver's feature toggles; the 7
+# consumer scripts in ~/.claude/scripts/ (commit-draft, diff-review, error-classify,
+# extract-tool-output, pdf-extract-structured, pr-draft, test-triage) depend on
+# this public signature.
 
 
 def _build_cascade(
@@ -826,6 +877,7 @@ def _try_cache_hit(
     provider: str,
     schema_t: tuple[str, ...],
     require_json: bool,
+    max_output_tokens: int,
     attempts: list[dict],
 ) -> dict | None:
     """Return a cache-hit success envelope, or None on miss / invalid cached value.
@@ -844,6 +896,9 @@ def _try_cache_hit(
             "cache_hit": True,
             "latency": 0,
             "cost": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "max_output_tokens": max_output_tokens,
         }
     )
     text = cached["text"]
@@ -873,6 +928,7 @@ def _try_live_hit(
     ckey: str,
     schema_t: tuple[str, ...],
     require_json: bool,
+    max_output_tokens: int,
     attempts: list[dict],
 ) -> dict | None:
     """Build the live success envelope + cache, or return None if validation fails."""
@@ -888,6 +944,9 @@ def _try_live_hit(
             "latency": round(raw["latency"], 3),
             "cost": cost,
             "json_valid": parsed is not None,
+            "input_tokens": raw.get("input_tokens", 0) or 0,
+            "output_tokens": raw.get("output_tokens", 0) or 0,
+            "max_output_tokens": max_output_tokens,
         }
     )
     if not ok:
@@ -916,6 +975,7 @@ def cheap_complete(
     require_json: bool = True,
     model: str | None = None,
     cloud_model: str | None = None,
+    max_output_tokens: int = 1024,
 ) -> dict:
     """Try T1 local, then T2 cloud, return the first good result.
 
@@ -925,9 +985,20 @@ def cheap_complete(
     the signal-distillation ling tier — e.g. web-research cited synthesis
     (deepseek-v4-flash: 1M ctx, $0.14/$0.28). Default None = current cascade.
 
+    max_output_tokens: hard output budget propagated to Ollama ``num_predict``
+    and OpenAI-compatible ``max_tokens``. Keep the 1024 default for backward
+    compatibility; bounded classifiers/extractors should request less.
+
     Returns dict with: text, model, tier, latency, cost, json_valid,
     fields_ok, attempts, error.
     """
+    if (
+        isinstance(max_output_tokens, bool)
+        or not isinstance(max_output_tokens, int)
+        or max_output_tokens < 1
+    ):
+        raise ValueError("max_output_tokens must be a positive integer")
+
     schema_t = tuple(schema_hint) if schema_hint else ()
     # ALWAYS scrub, even on the prefer_local path: T1 (Ollama) frequently
     # times out on 16GB VRAM and the SAME prompt then reaches a cloud tier.
@@ -956,25 +1027,52 @@ def cheap_complete(
         # cache lookup (per-model, NOT per-provider: same model on different
         # providers usually gives the same answer for short tasks; saves cost
         # if OpenRouter fails and we try ZenMux, ZenMux call hits cache).
-        ckey = _cache_key(mdl, eff_system, scrubbed_prompt, schema_t)
-        hit = _try_cache_hit(ckey, tier, mdl, provider, schema_t, require_json, attempts)
+        ckey = _cache_key(mdl, eff_system, scrubbed_prompt, schema_t, max_output_tokens)
+        hit = _try_cache_hit(
+            ckey,
+            tier,
+            mdl,
+            provider,
+            schema_t,
+            require_json,
+            max_output_tokens,
+            attempts,
+        )
         if hit is not None:
             return _complete_result(hit)
 
         try:
-            raw = _call_provider(mdl, provider, eff_system, scrubbed_prompt, eff_timeout)
+            raw = _call_provider(
+                mdl,
+                provider,
+                eff_system,
+                scrubbed_prompt,
+                eff_timeout,
+                max_output_tokens,
+            )
         except Exception as e:
             attempts.append(
                 {
                     "tier": tier,
                     "model": mdl,
                     "provider": provider,
+                    "max_output_tokens": max_output_tokens,
                     "error": f"{type(e).__name__}: {e}",
                 }
             )
             continue
 
-        env = _try_live_hit(raw, tier, mdl, provider, ckey, schema_t, require_json, attempts)
+        env = _try_live_hit(
+            raw,
+            tier,
+            mdl,
+            provider,
+            ckey,
+            schema_t,
+            require_json,
+            max_output_tokens,
+            attempts,
+        )
         if env is not None:
             return _complete_result(env)
 
@@ -1024,6 +1122,12 @@ def main() -> int:
     p.add_argument("--prompt", help="user prompt")
     p.add_argument("--schema", nargs="*", default=None, help="required JSON keys")
     p.add_argument("--timeout", type=float, default=20.0)
+    p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="maximum output tokens per provider attempt (default: 1024)",
+    )
     p.add_argument("--no-local", action="store_true", help="skip T1 local")
     p.add_argument("--no-json", action="store_true", help="don't require JSON output")
     p.add_argument("--probe", action="store_true", help="report availability")
@@ -1039,6 +1143,8 @@ def main() -> int:
         return 0
     if not args.system or not args.prompt:
         p.error("--system and --prompt are required (unless --probe)")
+    if args.max_tokens < 1:
+        p.error("--max-tokens must be a positive integer")
 
     result = cheap_complete(
         system=args.system,
@@ -1047,6 +1153,7 @@ def main() -> int:
         timeout_total=args.timeout,
         prefer_local=not args.no_local,
         require_json=not args.no_json,
+        max_output_tokens=args.max_tokens,
     )
     if args.json:
         print(json.dumps(result, indent=2))
