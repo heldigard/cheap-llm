@@ -34,13 +34,36 @@ FAIL = 0
 FAILURES: list[str] = []
 
 
+class ContractCheckFailure(AssertionError):
+    """A recorded contract violation that pytest must treat as a failure."""
+
+
 def check(name: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
     else:
         FAIL += 1
-        FAILURES.append(f"{name}: {detail}" if detail else name)
+        failure = f"{name}: {detail}" if detail else name
+        FAILURES.append(failure)
+        raise ContractCheckFailure(failure)
+
+
+def test_failed_check_raises_assertion() -> None:
+    """Guard the guard: pytest must see a deliberately false check fail."""
+    global PASS, FAIL
+    original_pass, original_fail = PASS, FAIL
+    original_failures = list(FAILURES)
+    try:
+        try:
+            check("contract harness probe", False)
+        except ContractCheckFailure:
+            pass
+        else:
+            raise AssertionError("a false contract check did not raise")
+    finally:
+        PASS, FAIL = original_pass, original_fail
+        FAILURES[:] = original_failures
 
 
 def _sig_params(fn: Callable[..., Any]) -> list[str]:
@@ -146,6 +169,10 @@ def main() -> int:
     for name, fn in TESTS:
         try:
             fn()
+        except ContractCheckFailure:
+            # check() already recorded the failure. Avoid double-counting it
+            # while retaining the standalone runner's aggregated report.
+            pass
         except Exception as exc:  # noqa: BLE001
             global FAIL
             FAIL += 1

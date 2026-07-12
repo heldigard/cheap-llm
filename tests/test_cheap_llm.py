@@ -19,10 +19,12 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import urllib.error
 import urllib.request as _urlreq
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields as _dc_fields
 from pathlib import Path
 from typing import Any, cast
@@ -607,6 +609,43 @@ check(
 )
 _restore_call_provider()
 
+# Cache payloads shared by model retain the provider/tier that generated the
+# response, even when a different cascade slot finds the entry later. Legacy
+# text-only payloads remain valid and use the lookup slot as best attribution.
+_provenance_key = cl._cache_key("shared-model", "s", "p", ("category",))
+cl._cache_put(
+    _provenance_key,
+    {"text": '{"category": "debug"}', "provider": "openrouter", "tier": "T2"},
+)
+_provenance_attempts: list[dict] = []
+_provenance_hit = cl._try_cache_hit(
+    _provenance_key,
+    "T2",
+    "shared-model",
+    "deepseek",
+    ("category",),
+    True,
+    1024,
+    _provenance_attempts,
+)
+check(
+    "cache hit preserves source provider provenance",
+    _provenance_hit is not None
+    and _provenance_hit["provider"] == "openrouter"
+    and _provenance_attempts[0].get("cache_lookup_provider") == "deepseek",
+    detail=f"hit={_provenance_hit} attempts={_provenance_attempts}",
+)
+_legacy_key = cl._cache_key("legacy-model", "s", "p", None)
+cl._cache_put(_legacy_key, {"text": "legacy text"})
+_legacy_hit = cl._try_cache_hit(
+    _legacy_key, "T2", "legacy-model", "zenmux", (), False, 1024, []
+)
+check(
+    "legacy text-only cache payload remains readable",
+    _legacy_hit is not None and _legacy_hit["provider"] == "zenmux",
+    detail=f"hit={_legacy_hit}",
+)
+
 # Bad budgets fail before transport/cache work and cannot silently request an
 # unbounded or nonsensical generation.
 for _bad_budget in (0, -1, True, 1.5):
@@ -621,6 +660,21 @@ for _bad_budget in (0, -1, True, 1.5):
         check(f"reject bad output budget {_bad_budget!r}", False, detail="no ValueError")
     except ValueError:
         check(f"reject bad output budget {_bad_budget!r}", True)
+
+# Invalid deadlines fail before cascade construction (which may probe Ollama)
+# or provider/cache work. Positive numeric values retain existing behavior.
+for _bad_timeout in (0, -1, True, float("nan"), float("inf"), -float("inf")):
+    try:
+        cl.cheap_complete(
+            system="C.",
+            prompt="x",
+            prefer_local=False,
+            require_json=False,
+            timeout_total=_bad_timeout,  # type: ignore[arg-type]
+        )
+        check(f"reject bad total timeout {_bad_timeout!r}", False, detail="no ValueError")
+    except ValueError:
+        check(f"reject bad total timeout {_bad_timeout!r}", True)
 
 
 # M6: Invalid JSON triggers cascade fallthrough
@@ -709,6 +763,36 @@ target = cl.CACHE_DIR / f"{ckey}.json"
 temp = target.with_suffix(".json.tmp")
 check("cache: target file written", target.exists())
 check("cache: no .tmp residue after successful write", not temp.exists())
+check(
+    "cache: file is private",
+    stat.S_IMODE(target.stat().st_mode) == 0o600,
+    detail=f"mode={stat.S_IMODE(target.stat().st_mode):o}",
+)
+check(
+    "cache: directory is private",
+    stat.S_IMODE(cl.CACHE_DIR.stat().st_mode) == 0o700,
+    detail=f"mode={stat.S_IMODE(cl.CACHE_DIR.stat().st_mode):o}",
+)
+
+_concurrent_key = cl._cache_key("concurrent-probe", "s", "p", None)
+
+
+def _write_concurrent_cache(value: int) -> None:
+    cl._cache_put(_concurrent_key, {"text": str(value)})
+
+
+with ThreadPoolExecutor(max_workers=8) as _pool:
+    list(_pool.map(_write_concurrent_cache, range(16)))
+_concurrent_value = cl._cache_get(_concurrent_key)
+check(
+    "cache: concurrent writers leave valid JSON",
+    _concurrent_value is not None and _concurrent_value["text"] in {str(i) for i in range(16)},
+    detail=f"value={_concurrent_value}",
+)
+check(
+    "cache: concurrent writers leave no temp residue",
+    not list(cl.CACHE_DIR.glob(f".{_concurrent_key}.*.tmp")),
+)
 
 # Cache write failure is best-effort: a write into an invalid dir must NOT
 # propagate and break a successful cascade. Simulate by monkeypatching
@@ -981,7 +1065,7 @@ _shape_path.unlink(missing_ok=True)
 
 # End-to-end: corrupted cache at the live ckey must fall through to the
 # provider instead of raising.
-cl._call_provider = lambda *a, **k: _ok('{"category": "debug"}')
+cl._call_provider = lambda *_args, **_kwargs: _ok('{"category": "debug"}')
 _e2e_system = "Classify." + cl.JSON_HINT + " Required keys: ['category']."
 _e2e_key = cl._cache_key("inclusionai/ling-2.6-flash", _e2e_system, "x", ("category",))
 (cl.CACHE_DIR / f"{_e2e_key}.json").write_text('["corrupted"]')
@@ -1068,6 +1152,26 @@ check(
     "CLI rejects non-positive --max-tokens before provider calls",
     _bad_budget_proc.returncode == 2 and "positive integer" in _bad_budget_proc.stderr,
     detail=f"rc={_bad_budget_proc.returncode} stderr={_bad_budget_proc.stderr[:120]}",
+)
+_bad_timeout_proc = subprocess.run(
+    [
+        sys.executable,
+        str(PROJECT_ROOT / "cheap_llm.py"),
+        "--system",
+        "s",
+        "--prompt",
+        "p",
+        "--timeout",
+        "nan",
+    ],
+    capture_output=True,
+    text=True,
+    timeout=15,
+)
+check(
+    "CLI rejects non-finite --timeout before provider calls",
+    _bad_timeout_proc.returncode == 2 and "positive finite" in _bad_timeout_proc.stderr,
+    detail=f"rc={_bad_timeout_proc.returncode} stderr={_bad_timeout_proc.stderr[:120]}",
 )
 
 # =================================================================

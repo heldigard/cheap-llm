@@ -87,6 +87,12 @@ retains compatibility with existing cache entries. Response-bearing and cached
 `output_tokens`, which makes savings measurable without expanding the
 top-level result envelope.
 
+`timeout_total` must be a positive finite number. Invalid deadlines fail
+before Ollama probing, cache access, or provider calls. Cache files are written
+atomically with private permissions; new entries retain the source provider
+and tier so cross-provider cache hits keep accurate telemetry. Existing
+text-only cache entries remain compatible.
+
 ## Testing
 
 ```bash

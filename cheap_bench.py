@@ -7,7 +7,7 @@ prints a leaderboard. The goal is data, not vibes — pick the model that
 actually wins on the actual prompts the pipeline will throw at it.
 
 Candidate models (all in our provider catalog — see CANDIDATES below for the live list):
-  - gemma4:12b            (local Ollama, 7.6 GB, free, private) — T1
+  - cryptidbleh/gemma4-claude-opus-4.6 (local Ollama, free, private) — T1
   - ling-2.6-flash / ling-2.6-1t / gemini-3.1-flash-lite (OpenRouter cloud)
   - gpt-5.4-nano / deepseek-v4-flash (OpenRouter; deepseek BYOK = $0)
 
@@ -24,8 +24,7 @@ Output: rank-ordered table printed to stdout; raw JSONL appended to
 Usage:
     python3 cheap_bench.py                  # all models, all tasks
     python3 cheap_bench.py --task intent    # one task
-    python3 cheap_bench.py --model gemma4:12b google/gemma-4-31b-it
-    python3 cheap_bench.py --no-cost        # skip cost reporting
+    python3 cheap_bench.py --model cryptidbleh/gemma4-claude-opus-4.6:latest
 """
 
 from __future__ import annotations
@@ -48,23 +47,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # --- Candidate catalog -----------------------------------------------------
 # 2026-06-19 round 3: pruned to the top 7 + local Ollama. Dropped from
 # earlier rounds (score <85 or had FAILs in diff_review):
-#   - google/gemma-4-31b-it (85.4) — no edge over local gemma4:12b (free)
+#   - google/gemma-4-31b-it (85.4) — no edge over the local primary (free)
 #   - qwen/qwen3.7-plus (84.6) — slow + expensive
 #   - qwen/qwen3.6-flash (83.6) — no edge
 #   - moonshotai/kimi-k2.7-code (83.6) — duplicates deepseek-v4-flash
-#   - gemma4:12b local is the T1 primary. Free, private, fast. R4 head-to-head:
-#     gemma4:12b avg 84.2 vs qwen3.5:9b 78.4, 3.2× faster. qwen3.5:9b was pruned
-#     (deleted locally 2026-06-19) — gemma4:12b wins on every axis.
+#   - cryptidbleh/gemma4-claude-opus-4.6 is the current free-text T1 primary.
+#     Keep this candidate aligned with cheap_llm.DEFAULT_LOCAL_PRIMARY so new
+#     benchmark rounds measure the model that production actually routes to.
 #   - nvidia/nemotron-3-super-120b (80.8) — slow
 #   - nvidia/nemotron-3-nano (69.8, FAIL) — variance
 #   - xiaomi/mimo-v2.5 (53.0, FAIL) — variance
 #   - stepfun/step-3.7-flash (36.4, FAIL) — bad fit for short tasks
 # Re-add a model if it shows a meaningful improvement in a future round.
 CANDIDATES: list[dict] = [
-    # Local (T1) — gemma4:12b. Free, private, fast. Validated as primary by
-    # cheap_llm.py R4 head-to-head (avg 84.2 on 5 preprocessor tasks) and
-    # ousted the previous qwen3.5:9b fallback (deleted 2026-06-19).
-    {"id": "gemma4:12b", "kind": "local", "provider": "ollama", "input": 0.0, "output": 0.0},
+    # Local (T1) — production free-text default. Keep the benchmark
+    # self-contained while matching cheap_llm.DEFAULT_LOCAL_PRIMARY.
+    {
+        "id": "cryptidbleh/gemma4-claude-opus-4.6:latest",
+        "kind": "local",
+        "provider": "ollama",
+        "input": 0.0,
+        "output": 0.0,
+    },
     # T2 cloud — pricing per OpenRouter public listing (NOT usage.cost, which
     # reports $0 for gemini/promo models). deepseek is BYOK = genuinely $0.
     # Pruned from this list (see DO-NOT-RE-TEST ledger in

@@ -81,12 +81,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass, field
+from numbers import Real
 from pathlib import Path
 
 # --- Public API contract ----------------------------------------------------
@@ -97,7 +100,7 @@ from pathlib import Path
 #   - MAJOR = removed/renamed public param or RESULT_KEY (consumers' require() gate trips)
 #   - MINOR = additive (new param with default, new RESULT_KEY, new public fn)
 #   - PATCH = internal refactor, model/cascade changes, bug fixes
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -457,18 +460,60 @@ def _cache_put(key: str, value: dict) -> None:
     # cache file that the next _cache_get would try to parse. Cache writes are
     # best-effort: failure here MUST NOT propagate and break a successful
     # cascade — caller already returned the value to the user.
+    tmp: Path | None = None
+    fd = -1
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        # Developer prompts and model responses can contain private project
+        # context even after secret scrubbing. Repair permissive directories
+        # best-effort; unusual filesystems must not break completion.
+        try:
+            CACHE_DIR.chmod(0o700)
+        except OSError:
+            pass
         # prune oldest beyond CACHE_MAX_ENTRIES
-        files = sorted(CACHE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        files: list[tuple[float, Path]] = []
+        for path in CACHE_DIR.glob("*.json"):
+            try:
+                files.append((path.stat().st_mtime, path))
+            except OSError:
+                # Another process may have pruned the entry after globbing.
+                continue
+        files.sort(key=lambda item: item[0])
         while len(files) >= CACHE_MAX_ENTRIES:
-            files.pop(0).unlink(missing_ok=True)
+            _, oldest = files.pop(0)
+            try:
+                oldest.unlink(missing_ok=True)
+            except OSError:
+                pass
         target = CACHE_DIR / f"{key}.json"
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(value))
-        tmp.replace(target)
+        # Unique same-directory temp files prevent concurrent writers from
+        # replacing/removing one another's temp path. mkstemp starts at 0o600;
+        # os.replace is atomic because source and target share a filesystem.
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{key}.", suffix=".tmp", dir=CACHE_DIR)
+        tmp = Path(tmp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1  # ownership transferred to the file object
+            json.dump(value, handle)
+        os.replace(tmp, target)
+        tmp = None
+        try:
+            target.chmod(0o600)
+        except OSError:
+            pass
     except Exception:
         pass  # cache is advisory; never break the cascade on a write error
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # --- Transport ------------------------------------------------------------
@@ -531,10 +576,10 @@ def _call_ollama(
         headers={"Content-Type": "application/json"},
     )
     t0 = time.perf_counter()
-    # nosemgrep: OLLAMA_URL is explicit local operator configuration.
+    # OLLAMA_URL is explicit local operator configuration, not request input.
     with (
-        urllib.request.urlopen(req, timeout=timeout) as r
-    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+        urllib.request.urlopen(req, timeout=timeout) as r  # nosemgrep
+    ):
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     return {
@@ -603,10 +648,9 @@ def _openai_compat_call(
     )
     t0 = time.perf_counter()
     # endpoint.url comes only from frozen in-module provider constants.
-    # nosemgrep
     with (
-        urllib.request.urlopen(req, timeout=timeout) as r
-    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+        urllib.request.urlopen(req, timeout=timeout) as r  # nosemgrep
+    ):
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
@@ -706,10 +750,10 @@ def _call_deepseek(
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
     )
     t0 = time.perf_counter()
-    # nosemgrep: DEEPSEEK_URL is a fixed in-module provider constant.
+    # DEEPSEEK_URL is a fixed in-module provider constant.
     with (
-        urllib.request.urlopen(req, timeout=timeout) as r
-    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+        urllib.request.urlopen(req, timeout=timeout) as r  # nosemgrep
+    ):
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
@@ -901,19 +945,28 @@ def _try_cache_hit(
     cached = _cache_get(ckey)
     if not cached:
         return None
-    attempts.append(
-        {
-            "tier": tier,
-            "model": model,
-            "provider": provider,
-            "cache_hit": True,
-            "latency": 0,
-            "cost": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "max_output_tokens": max_output_tokens,
-        }
-    )
+    source_provider = cached.get("provider")
+    if not isinstance(source_provider, str) or not source_provider:
+        source_provider = provider
+    source_tier = cached.get("tier")
+    if not isinstance(source_tier, str) or not source_tier:
+        source_tier = tier
+    attempt = {
+        "tier": source_tier,
+        "model": model,
+        "provider": source_provider,
+        "cache_hit": True,
+        "latency": 0,
+        "cost": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "max_output_tokens": max_output_tokens,
+    }
+    if source_provider != provider:
+        attempt["cache_lookup_provider"] = provider
+    if source_tier != tier:
+        attempt["cache_lookup_tier"] = tier
+    attempts.append(attempt)
     text = cached["text"]
     parsed = _try_parse_json(text) if require_json else None
     ok = _validate(parsed, schema_t) if require_json else True
@@ -922,8 +975,8 @@ def _try_cache_hit(
     return {
         "text": text,
         "model": model,
-        "provider": provider,
-        "tier": tier,
+        "provider": source_provider,
+        "tier": source_tier,
         "latency": 0,
         "cost": 0,
         "json_valid": parsed is not None,
@@ -964,11 +1017,12 @@ def _try_live_hit(
     )
     if not ok:
         return None
-    _cache_put(ckey, {"text": text})
+    source_provider = raw.get("provider") or provider
+    _cache_put(ckey, {"text": text, "provider": source_provider, "tier": tier})
     return {
         "text": text,
         "model": model,
-        "provider": raw.get("provider", provider),
+        "provider": source_provider,
         "tier": tier,
         "latency": raw["latency"],
         "cost": cost,
@@ -1011,6 +1065,13 @@ def cheap_complete(
         or max_output_tokens < 1
     ):
         raise ValueError("max_output_tokens must be a positive integer")
+    if (
+        isinstance(timeout_total, bool)
+        or not isinstance(timeout_total, Real)
+        or not math.isfinite(timeout_total)
+        or timeout_total <= 0
+    ):
+        raise ValueError("timeout_total must be a positive finite number")
 
     schema_t = tuple(schema_hint) if schema_hint else ()
     # ALWAYS scrub, even on the prefer_local path: T1 (Ollama) frequently
@@ -1036,7 +1097,7 @@ def cheap_complete(
     local_model = _resolve_local_model(model, require_json, schema_t)
     cascade = _build_cascade(prefer_local, local_model, cloud_model)
     attempts: list[dict] = []
-    deadline = time.perf_counter() + timeout_total
+    deadline = time.perf_counter() + float(timeout_total)
 
     for tier, mdl, provider, per_timeout in cascade:
         remaining = deadline - time.perf_counter()
@@ -1127,10 +1188,10 @@ def _probe() -> dict:
     }
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", method="GET")
-        # nosemgrep: OLLAMA_URL is explicit local operator configuration.
+        # OLLAMA_URL is explicit local operator configuration, not request input.
         with (
-            urllib.request.urlopen(req, timeout=2) as r
-        ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+            urllib.request.urlopen(req, timeout=2) as r  # nosemgrep
+        ):
             data = json.loads(r.read())
         out["ollama_alive"] = True
         out["local_models"] = [
@@ -1177,6 +1238,8 @@ def main() -> int:
         p.error("--system and --prompt are required (unless --probe)")
     if args.max_tokens < 1:
         p.error("--max-tokens must be a positive integer")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        p.error("--timeout must be a positive finite number")
 
     result = cheap_complete(
         system=args.system,
