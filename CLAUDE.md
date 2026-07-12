@@ -54,7 +54,12 @@ cheap-llm --system "X" --prompt "Y"            # run cascade, print text
 cheap-llm --system "X" --prompt "Y" --json     # full JSON envelope
 cheap-llm --system "X" --prompt "Y" --schema f1 f2  # with field validation
 cheap-llm --system "X" --prompt "Y" --max-tokens 256 # bound every attempt
+cheap-llm --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash  # force T2 model
+cheap-llm --system "X" --prompt "Y" --model my-model:latest  # explicit T1 local model
 ```
+
+Env knobs: `OLLAMA_URL` (endpoint override), `CHEAP_LLM_LOCAL_ONLY=1` (never
+call cloud), `CHEAP_LLM_LOCAL_COLD_TIMEOUT` (cold-VRAM T1 budget, default 25s).
 
 ## Public API contract (SemVer) — ecosystem decoupling
 

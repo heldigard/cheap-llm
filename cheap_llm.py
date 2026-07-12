@@ -97,7 +97,7 @@ from pathlib import Path
 #   - MAJOR = removed/renamed public param or RESULT_KEY (consumers' require() gate trips)
 #   - MINOR = additive (new param with default, new RESULT_KEY, new public fn)
 #   - PATCH = internal refactor, model/cascade changes, bug fixes
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -441,9 +441,14 @@ def _cache_get(key: str) -> dict | None:
     p = CACHE_DIR / f"{key}.json"
     if p.exists():
         try:
-            return json.loads(p.read_text())
+            value = json.loads(p.read_text())
         except Exception:
             return None
+        # Shape guard: a corrupted/foreign cache file that parses as JSON but
+        # isn't {"text": str} would raise KeyError/TypeError inside
+        # _try_cache_hit and crash the whole cascade. Treat it as a miss.
+        if isinstance(value, dict) and isinstance(value.get("text"), str):
+            return value
     return None
 
 
@@ -527,7 +532,9 @@ def _call_ollama(
     )
     t0 = time.perf_counter()
     # nosemgrep: OLLAMA_URL is explicit local operator configuration.
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    with (
+        urllib.request.urlopen(req, timeout=timeout) as r
+    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     return {
@@ -597,7 +604,9 @@ def _openai_compat_call(
     t0 = time.perf_counter()
     # endpoint.url comes only from frozen in-module provider constants.
     # nosemgrep
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    with (
+        urllib.request.urlopen(req, timeout=timeout) as r
+    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
@@ -698,7 +707,9 @@ def _call_deepseek(
     )
     t0 = time.perf_counter()
     # nosemgrep: DEEPSEEK_URL is a fixed in-module provider constant.
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    with (
+        urllib.request.urlopen(req, timeout=timeout) as r
+    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(r.read().decode())
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
@@ -833,9 +844,11 @@ def _build_cascade(
             # so tight-budget hooks keep their own ceiling.
             local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
         cascade.append(("T1", resolved, "ollama", local_timeout))
-    local_only = (
-        os.environ.get("CHEAP_LLM_LOCAL_ONLY", "").strip().lower()
-        in ("1", "true", "yes", "on")
+    local_only = os.environ.get("CHEAP_LLM_LOCAL_ONLY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
     )
     if local_only:
         if not cascade:
@@ -1008,10 +1021,17 @@ def cheap_complete(
     scrubbed_system = scrub_secrets(system)
     scrubbed_prompt = scrub_secrets(prompt)
 
-    # JSON contract: append hint to system prompt
+    # JSON contract: whenever the output will be VALIDATED as JSON, the model
+    # must be TOLD to emit JSON — schema or not. Before 1.2.1, require_json
+    # without schema_hint validated JSON but never instructed the model
+    # (observed live: pdf-extract-structured), so prose replies were rejected
+    # as "all tiers failed". The schema path keeps the exact pre-existing
+    # string so its cache namespace is preserved.
     eff_system = scrubbed_system
-    if require_json and schema_t:
-        eff_system = scrubbed_system + JSON_HINT + f" Required keys: {list(schema_t)}."
+    if require_json:
+        eff_system = scrubbed_system + JSON_HINT
+        if schema_t:
+            eff_system += f" Required keys: {list(schema_t)}."
 
     local_model = _resolve_local_model(model, require_json, schema_t)
     cascade = _build_cascade(prefer_local, local_model, cloud_model)
@@ -1099,11 +1119,18 @@ def _probe() -> dict:
         "ollama_alive": False,
         "local_models": [],
         "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
+        "zenmux_key_set": bool(os.environ.get("ZENMUX_API_KEY")),
+        "deepseek_key_set": bool(os.environ.get("DEEPSEEK_API_KEY")),
+        "local_only": os.environ.get("CHEAP_LLM_LOCAL_ONLY", "").strip().lower()
+        in ("1", "true", "yes", "on"),
+        "cache_entries": len(list(CACHE_DIR.glob("*.json"))) if CACHE_DIR.exists() else 0,
     }
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", method="GET")
         # nosemgrep: OLLAMA_URL is explicit local operator configuration.
-        with urllib.request.urlopen(req, timeout=2) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+        with (
+            urllib.request.urlopen(req, timeout=2) as r
+        ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
             data = json.loads(r.read())
         out["ollama_alive"] = True
         out["local_models"] = [
@@ -1129,6 +1156,11 @@ def main() -> int:
         help="maximum output tokens per provider attempt (default: 1024)",
     )
     p.add_argument("--no-local", action="store_true", help="skip T1 local")
+    p.add_argument("--model", help="explicit T1 local model (Ollama tag)")
+    p.add_argument(
+        "--cloud-model",
+        help="force a specific T2 cloud model (e.g. deepseek/deepseek-v4-flash)",
+    )
     p.add_argument("--no-json", action="store_true", help="don't require JSON output")
     p.add_argument("--probe", action="store_true", help="report availability")
     p.add_argument("--json", action="store_true", help="output JSON envelope")
@@ -1153,6 +1185,8 @@ def main() -> int:
         timeout_total=args.timeout,
         prefer_local=not args.no_local,
         require_json=not args.no_json,
+        model=args.model,
+        cloud_model=args.cloud_model,
         max_output_tokens=args.max_tokens,
     )
     if args.json:

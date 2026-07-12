@@ -28,7 +28,21 @@ cheap-llm --system "Classify." --prompt "..." --schema category reason --json
 
 # Bound a short classifier so local and cloud providers cannot over-generate
 cheap-llm --system "Classify." --prompt "..." --schema category --max-tokens 256
+
+# Force a specific T2 cloud model (with the usual OR → ZenMux failover) or
+# an explicit T1 local model
+cheap-llm --system "Synthesize." --prompt "..." --cloud-model deepseek/deepseek-v4-flash
+cheap-llm --system "Classify." --prompt "..." --model my-local-model:latest
 ```
+
+## Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `OLLAMA_URL` | Override the local Ollama endpoint (default `http://localhost:11434`) |
+| `CHEAP_LLM_LOCAL_ONLY` | `1/true/yes/on` → T1 only, never call cloud (privacy mode) |
+| `CHEAP_LLM_LOCAL_COLD_TIMEOUT` | T1 budget in seconds when the model is not loaded in VRAM yet (default 25) |
+| `OPENROUTER_API_KEY` / `ZENMUX_API_KEY` / `DEEPSEEK_API_KEY` | Enable the respective T2 providers |
 
 ## Programmatic usage
 

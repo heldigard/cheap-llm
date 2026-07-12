@@ -489,9 +489,7 @@ _restore_call_provider()
 # M2: OpenRouter down on ling-2.6-flash, ZenMux catches
 def _m2_call(model, provider, sys, prompt, timeout, max_output_tokens):
     if model == "inclusionai/ling-2.6-flash" and provider == "openrouter":
-        raise urllib.error.HTTPError(
-            "https://x", 503, "Service Unavailable", cast(Any, {}), None
-        )
+        raise urllib.error.HTTPError("https://x", 503, "Service Unavailable", cast(Any, {}), None)
     if model == "inclusionai/ling-2.6-flash" and provider == "zenmux":
         return _ok('{"category": "debug"}', provider=provider)
     return _ok('{"category": "should not reach"}', provider=provider)
@@ -743,9 +741,7 @@ _urlreq.urlopen = _fake_urlopen_factory(_body_none_content, _openrouter_payload)
 try:
     os.environ["OPENROUTER_API_KEY"] = "test"
     try:
-        r = cl._call_openrouter(
-            "openai/gpt-5.4-nano", "s", "p", timeout=5, max_output_tokens=288
-        )
+        r = cl._call_openrouter("openai/gpt-5.4-nano", "s", "p", timeout=5, max_output_tokens=288)
         check(
             "content=None → empty text, no AttributeError",
             r["text"] == "" and r["provider"] == "openrouter",
@@ -854,19 +850,16 @@ print("\n=== UNIT: local-only and model normalization ===")
 # Test _normalize_model_name
 check(
     "normalize: empty or None returns empty",
-    cl._normalize_model_name(None) == "" and cl._normalize_model_name("") == ""
+    cl._normalize_model_name(None) == "" and cl._normalize_model_name("") == "",
 )
 check(
     "normalize: adds latest suffix when missing",
-    cl._normalize_model_name("my-model") == "my-model:latest"
+    cl._normalize_model_name("my-model") == "my-model:latest",
 )
-check(
-    "normalize: keeps existing suffix",
-    cl._normalize_model_name("my-model:v2") == "my-model:v2"
-)
+check("normalize: keeps existing suffix", cl._normalize_model_name("my-model:v2") == "my-model:v2")
 check(
     "normalize: trims whitespace",
-    cl._normalize_model_name("  my-model:latest  ") == "my-model:latest"
+    cl._normalize_model_name("  my-model:latest  ") == "my-model:latest",
 )
 
 # Test _ollama_model_loaded tag normalization
@@ -880,25 +873,18 @@ _ps_payload = {
 _urlreq.urlopen = _fake_urlopen_factory(_ps_payload)
 try:
     check(
-        "model loaded matches exact with tag",
-        cl._ollama_model_loaded("some-model:latest") is True
+        "model loaded matches exact with tag", cl._ollama_model_loaded("some-model:latest") is True
     )
-    check(
-        "model loaded matches normalized tagless",
-        cl._ollama_model_loaded("some-model") is True
-    )
+    check("model loaded matches normalized tagless", cl._ollama_model_loaded("some-model") is True)
     check(
         "model loaded matches exact with tag (another-model)",
-        cl._ollama_model_loaded("another-model:v1") is True
+        cl._ollama_model_loaded("another-model:v1") is True,
     )
     check(
         "model loaded tagless fails for tag v1 model",
-        cl._ollama_model_loaded("another-model") is False
+        cl._ollama_model_loaded("another-model") is False,
     )
-    check(
-        "non-loaded model returns False",
-        cl._ollama_model_loaded("missing-model") is False
-    )
+    check("non-loaded model returns False", cl._ollama_model_loaded("missing-model") is False)
 finally:
     _urlreq.urlopen = _orig_urlopen_norm
 
@@ -912,7 +898,7 @@ try:
     check(
         "local_only forces T1 only and ignores cloud models",
         len(cascade_lo) == 1 and cascade_lo[0][0] == "T1" and cascade_lo[0][1] == "test-model",
-        detail=f"cascade={cascade_lo}"
+        detail=f"cascade={cascade_lo}",
     )
 
     # local_only with prefer_local=True and cloud_model=None
@@ -920,13 +906,111 @@ try:
     check(
         "local_only restricts normal cascade to T1 only",
         len(cascade_lo_2) == 1 and cascade_lo_2[0][0] == "T1",
-        detail=f"cascade={cascade_lo_2}"
+        detail=f"cascade={cascade_lo_2}",
     )
 finally:
     if _orig_local_only is not None:
         os.environ["CHEAP_LLM_LOCAL_ONLY"] = _orig_local_only
     else:
         os.environ.pop("CHEAP_LLM_LOCAL_ONLY", None)
+
+
+# =================================================================
+# UNIT: 1.2.1 regressions — JSON hint without schema + cache shape guard
+# =================================================================
+print("\n=== UNIT: 1.2.1 regression guards ===")
+
+# require_json=True WITHOUT schema_hint must still instruct the model to emit
+# JSON (before 1.2.1 the hint was only added when a schema was present, so
+# validation rejected prose the model was never told not to write).
+_seen_systems: list[str] = []
+
+
+def _sys_collector(model, provider, system, prompt, timeout, max_output_tokens):
+    _seen_systems.append(system)
+    return _ok('{"anything": "goes"}', provider=provider)
+
+
+shutil.rmtree(cache_dir, ignore_errors=True)
+cl._call_provider = _sys_collector
+out = cl.cheap_complete(
+    system="Summarize.", prompt="x", schema_hint=None, require_json=True, prefer_local=False
+)
+check(
+    "require_json without schema → JSON_HINT injected",
+    len(_seen_systems) == 1 and cl.JSON_HINT in _seen_systems[0],
+    detail=f"system={_seen_systems[-1][:120]!r}",
+)
+check(
+    "require_json without schema → no 'Required keys' suffix",
+    "Required keys" not in _seen_systems[0],
+)
+out = cl.cheap_complete(
+    system="Summarize.",
+    prompt="x",
+    schema_hint=["anything"],
+    require_json=True,
+    prefer_local=False,
+)
+check(
+    "require_json with schema → hint + Required keys (pre-1.2.1 string preserved)",
+    len(_seen_systems) == 2
+    and _seen_systems[1].endswith(cl.JSON_HINT + " Required keys: ['anything']."),
+    detail=f"system={_seen_systems[-1][-80:]!r}",
+)
+_restore_call_provider()
+
+# Cache shape guard: a cache file that parses as JSON but is not
+# {"text": str} must be treated as a MISS, not crash _try_cache_hit.
+_shape_key = cl._cache_key("shape-guard-probe", "s", "p", None)
+_shape_path = cl.CACHE_DIR / f"{_shape_key}.json"
+cl.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+for _bad in ('["a", "list"]', '{"no_text_key": 1}', '{"text": 42}', '"bare string"'):
+    _shape_path.write_text(_bad)
+    check(
+        f"cache shape guard: {_bad[:24]!r} → miss (None)",
+        cl._cache_get(_shape_key) is None,
+    )
+_shape_path.write_text('{"text": "valid"}')
+_hit = cl._cache_get(_shape_key)
+check(
+    "cache shape guard: well-formed entry still hits",
+    _hit is not None and _hit["text"] == "valid",
+)
+_shape_path.unlink(missing_ok=True)
+
+# End-to-end: corrupted cache at the live ckey must fall through to the
+# provider instead of raising.
+cl._call_provider = lambda *a, **k: _ok('{"category": "debug"}')
+_e2e_system = "Classify." + cl.JSON_HINT + " Required keys: ['category']."
+_e2e_key = cl._cache_key("inclusionai/ling-2.6-flash", _e2e_system, "x", ("category",))
+(cl.CACHE_DIR / f"{_e2e_key}.json").write_text('["corrupted"]')
+try:
+    out = cl.cheap_complete(
+        system="Classify.",
+        prompt="x",
+        schema_hint=["category"],
+        prefer_local=False,
+        timeout_total=15,
+    )
+    check(
+        "corrupted cache falls through to live provider (no crash)",
+        out["error"] is None and out["cached"] is False and out["json_valid"] is True,
+        detail=f"error={out['error']!r} cached={out['cached']}",
+    )
+except Exception as e:  # noqa: BLE001 — the regression under test IS the crash
+    check(
+        "corrupted cache falls through to live provider (no crash)",
+        False,
+        detail=f"raised {type(e).__name__}: {e}",
+    )
+finally:
+    _restore_call_provider()
+
+# _probe reports every provider key + local_only + cache size
+_probe_keys = set(cl._probe())
+for _pk in ("zenmux_key_set", "deepseek_key_set", "local_only", "cache_entries"):
+    check(f"_probe exposes {_pk}", _pk in _probe_keys)
 
 
 # =================================================================
