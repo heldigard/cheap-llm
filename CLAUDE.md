@@ -54,7 +54,8 @@ cheap-llm --system "X" --prompt "Y"            # run cascade, print text
 cheap-llm --system "X" --prompt "Y" --json     # full JSON envelope
 cheap-llm --system "X" --prompt "Y" --schema f1 f2  # with field validation
 cheap-llm --system "X" --prompt "Y" --max-tokens 256 # bound every attempt
-cheap-llm --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash  # force T2 model
+cheap-llm --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash  # pin T2 fallback
+cheap-llm --no-local --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash  # cloud-only
 cheap-llm --system "X" --prompt "Y" --model my-model:latest  # explicit T1 local model
 ```
 
@@ -154,5 +155,6 @@ pattern).
   `cryptidbleh/gemma4-claude-opus-4.6:latest` for free text and
   `SetneufPT/Qwopus3.5-4B-Coder-MTP` for schema/JSON via Ollama.
 - **T2 cloud**: cascade order is `TOP3_CASCADE` + `LEGACY_CASCADE` constants.
-- **Forced cloud model**: `cheap_complete(cloud_model="deepseek/deepseek-v4-flash")`
+- **Pinned T2 fallback**: `cheap_complete(cloud_model="deepseek/deepseek-v4-flash")`;
+  add `prefer_local=False` when the call must be cloud-only.
   for judgment-heavy tasks (1M ctx, cache-aware cost).

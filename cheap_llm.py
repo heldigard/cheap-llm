@@ -87,10 +87,12 @@ import re
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from numbers import Real
 from pathlib import Path
+from typing import Protocol
 
 # --- Public API contract ----------------------------------------------------
 # The surface consumers may depend on. Everything else is private (_-prefixed)
@@ -100,7 +102,7 @@ from pathlib import Path
 #   - MAJOR = removed/renamed public param or RESULT_KEY (consumers' require() gate trips)
 #   - MINOR = additive (new param with default, new RESULT_KEY, new public fn)
 #   - PATCH = internal refactor, model/cascade changes, bug fixes
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -205,6 +207,37 @@ DEFAULT_LOCAL_STRUCTURED = "SetneufPT/Qwopus3.5-4B-Coder-MTP_Q4_64k_8GB-GPU:late
 # timeout_total, so callers with tight deadlines are unaffected.
 LOCAL_COLD_TIMEOUT = float(os.environ.get("CHEAP_LLM_LOCAL_COLD_TIMEOUT", "25"))
 
+# External responses are untrusted input. Token ceilings constrain model
+# generation but do not constrain a broken/proxied HTTP response, so every
+# transport also enforces a byte ceiling before decoding or JSON parsing.
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+class _ReadableResponse(Protocol):
+    def read(self, amount: int = -1) -> bytes: ...
+
+
+def _read_json_response(response: _ReadableResponse) -> dict:
+    """Read one bounded UTF-8 JSON object from an HTTP response."""
+    raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("provider response exceeds 4 MiB limit")
+    body = json.loads(raw.decode("utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError("provider response must be a JSON object")
+    return body
+
+
+def _public_attempt_error(exc: Exception) -> str:
+    """Return bounded provider diagnostics without URLs, bodies, or prompts."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTPError: HTTP {exc.code}"
+    if isinstance(exc, (TimeoutError, urllib.error.URLError)):
+        return f"{type(exc).__name__}: request failed"
+    if isinstance(exc, RuntimeError) and str(exc).endswith(" not set"):
+        return f"RuntimeError: {str(exc)[:260]}"
+    return f"{type(exc).__name__}: provider attempt failed"
+
 
 def _normalize_model_name(name: str | None) -> str:
     if not name:
@@ -223,7 +256,7 @@ def _ollama_model_loaded(model: str) -> bool:
         # OLLAMA_URL is an explicit operator setting, not request/user input.
         # nosemgrep
         with urllib.request.urlopen(req, timeout=1.5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = _read_json_response(resp)
     except Exception:
         # Ollama down or unreadable: keep the fast budget — a dead server
         # fails the T1 attempt instantly anyway.
@@ -580,7 +613,7 @@ def _call_ollama(
     with (
         urllib.request.urlopen(req, timeout=timeout) as r  # nosemgrep
     ):
-        body = json.loads(r.read().decode())
+        body = _read_json_response(r)
     latency = time.perf_counter() - t0
     return {
         "text": _strip_ollama_reasoning(str(body.get("response", "")).strip()),
@@ -651,7 +684,7 @@ def _openai_compat_call(
     with (
         urllib.request.urlopen(req, timeout=timeout) as r  # nosemgrep
     ):
-        body = json.loads(r.read().decode())
+        body = _read_json_response(r)
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
     text = (msg.get("content") or "").strip()
@@ -754,7 +787,7 @@ def _call_deepseek(
     with (
         urllib.request.urlopen(req, timeout=timeout) as r  # nosemgrep
     ):
-        body = json.loads(r.read().decode())
+        body = _read_json_response(r)
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
     text = (msg.get("content") or "").strip()
@@ -1046,8 +1079,10 @@ def cheap_complete(
 ) -> dict:
     """Try T1 local, then T2 cloud, return the first good result.
 
-    cloud_model: force a SPECIFIC cloud model for the T2 tier (with the usual
+    cloud_model: pin a SPECIFIC cloud model for the T2 tier (with the usual
     OpenRouter→ZenMux failover) instead of the default ling/gemini cascade.
+    This does not skip T1 when prefer_local=True; pass prefer_local=False for
+    a cloud-only call.
     Use for judgment-heavy tasks where a frontier-class economical model beats
     the signal-distillation ling tier — e.g. web-research cited synthesis
     (deepseek-v4-flash: 1M ctx, $0.14/$0.28). Default None = current cascade.
@@ -1138,7 +1173,7 @@ def cheap_complete(
                     "model": mdl,
                     "provider": provider,
                     "max_output_tokens": max_output_tokens,
-                    "error": f"{type(e).__name__}: {e}",
+                    "error": _public_attempt_error(e),
                 }
             )
             continue
@@ -1192,7 +1227,7 @@ def _probe() -> dict:
         with (
             urllib.request.urlopen(req, timeout=2) as r  # nosemgrep
         ):
-            data = json.loads(r.read())
+            data = _read_json_response(r)
         out["ollama_alive"] = True
         out["local_models"] = [
             m["name"] for m in data.get("models", []) if "embed" not in m["name"]
@@ -1220,7 +1255,10 @@ def main() -> int:
     p.add_argument("--model", help="explicit T1 local model (Ollama tag)")
     p.add_argument(
         "--cloud-model",
-        help="force a specific T2 cloud model (e.g. deepseek/deepseek-v4-flash)",
+        help=(
+            "pin the T2 fallback model; combine with --no-local for cloud-only "
+            "(e.g. deepseek/deepseek-v4-flash)"
+        ),
     )
     p.add_argument("--no-json", action="store_true", help="don't require JSON output")
     p.add_argument("--probe", action="store_true", help="report availability")

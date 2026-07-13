@@ -278,6 +278,25 @@ check(
     _ollama_payload.get("options", {}).get("num_predict") == 192 and _ol["text"] == "ok",
 )
 
+# A provider/proxy can ignore the requested token budget. Bound raw response
+# bytes before decoding so malformed upstreams cannot grow memory unboundedly.
+try:
+    cl._read_json_response(_FakeResp(b"x" * (cl.MAX_RESPONSE_BYTES + 1)))
+except ValueError as exc:
+    check("transport rejects responses over 4 MiB", "4 MiB" in str(exc))
+else:
+    check("transport rejects responses over 4 MiB", False, "oversized body accepted")
+
+check(
+    "public HTTP attempt error omits URL and reason body",
+    cl._public_attempt_error(
+        urllib.error.HTTPError(
+            "https://example.invalid/private", 503, "body-like reason", cast(Any, {}), None
+        )
+    )
+    == "HTTPError: HTTP 503",
+)
+
 # Reproduce the 2026-06-19 bug: prefer_local=True used to skip scrubbing, but
 # cloud tiers always follow T1, so unscrubbed secrets reached third-party APIs
 # (+ the plaintext cache). Fix: scrub is unconditional.

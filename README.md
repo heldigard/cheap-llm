@@ -29,9 +29,10 @@ cheap-llm --system "Classify." --prompt "..." --schema category reason --json
 # Bound a short classifier so local and cloud providers cannot over-generate
 cheap-llm --system "Classify." --prompt "..." --schema category --max-tokens 256
 
-# Force a specific T2 cloud model (with the usual OR → ZenMux failover) or
-# an explicit T1 local model
+# Pin a specific T2 fallback model (with the usual OR → ZenMux failover),
+# force cloud-only with --no-local, or choose an explicit T1 local model
 cheap-llm --system "Synthesize." --prompt "..." --cloud-model deepseek/deepseek-v4-flash
+cheap-llm --no-local --system "Synthesize." --prompt "..." --cloud-model deepseek/deepseek-v4-flash
 cheap-llm --system "Classify." --prompt "..." --model my-local-model:latest
 ```
 
@@ -86,6 +87,10 @@ retains compatibility with existing cache entries. Response-bearing and cached
 `attempts` records include `max_output_tokens`, `input_tokens`, and
 `output_tokens`, which makes savings measurable without expanding the
 top-level result envelope.
+
+Every HTTP response is also capped at 4 MiB before UTF-8 decoding and JSON
+parsing. This protects callers from oversized or malformed provider/proxy
+responses independently of the requested token budget.
 
 `timeout_total` must be a positive finite number. Invalid deadlines fail
 before Ollama probing, cache access, or provider calls. Cache files are written
