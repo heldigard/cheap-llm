@@ -278,6 +278,61 @@ check(
     _ollama_payload.get("options", {}).get("num_predict") == 192 and _ol["text"] == "ok",
 )
 
+# num_ctx must hold the prompt AND generation. A small input + the default
+# output budget must NOT bump num_ctx past the 2048 bracket (no VRAM regression
+# for the common short-task path).
+_small_ctx_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {"response": "ok", "prompt_eval_count": 2, "eval_count": 1}, _small_ctx_payload
+)
+try:
+    _small_ctx = cl._call_ollama("local", "s", "p", timeout=5, max_output_tokens=1024)
+finally:
+    _urlreq.urlopen = _orig_urlopen
+check(
+    "ollama num_ctx stays at 2048 for small input + default budget",
+    _small_ctx_payload.get("options", {}).get("num_ctx") == 2048 and _small_ctx["text"] == "ok",
+    detail=f"num_ctx={_small_ctx_payload.get('options', {}).get('num_ctx')}",
+)
+
+# A near-bracket-edge input (just under 4K chars) + a large output budget must
+# raise num_ctx above the 2048 bracket so Ollama does not silently cap
+# num_predict at the remaining context (the original truncation bug).
+_big_ctx_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {"response": "ok", "prompt_eval_count": 2, "eval_count": 1}, _big_ctx_payload
+)
+try:
+    _big_ctx = cl._call_ollama("local", "x" * 3900, "y" * 50, timeout=5, max_output_tokens=2048)
+finally:
+    _urlreq.urlopen = _orig_urlopen
+_big_total = 3900 + 50
+_big_needed = _big_total // 3 + 2048  # est_input + output (slack excluded for a lower bound)
+check(
+    "ollama num_ctx floors on input + output budget",
+    _big_ctx_payload.get("options", {}).get("num_ctx") >= _big_needed
+    and _big_ctx_payload.get("options", {}).get("num_predict") == 2048
+    and _big_ctx["text"] == "ok",
+    detail=(f"num_ctx={_big_ctx_payload.get('options', {}).get('num_ctx')} needed>={_big_needed}"),
+)
+
+# A pathological very large input must NOT push num_ctx past the 32768 ceiling
+# (the floor is capped) — otherwise a 9B model on 16GB VRAM OOMs. Such inputs
+# truncated before the fix too; the cap preserves that pre-existing ceiling.
+_cap_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {"response": "ok", "prompt_eval_count": 2, "eval_count": 1}, _cap_payload
+)
+try:
+    _cap = cl._call_ollama("local", "x" * 200_000, "y", timeout=5, max_output_tokens=1024)
+finally:
+    _urlreq.urlopen = _orig_urlopen
+check(
+    "ollama num_ctx capped at 32768 for huge input (no VRAM OOM)",
+    _cap_payload.get("options", {}).get("num_ctx") == 32768 and _cap["text"] == "ok",
+    detail=f"num_ctx={_cap_payload.get('options', {}).get('num_ctx')}",
+)
+
 # A provider/proxy can ignore the requested token budget. Bound raw response
 # bytes before decoding so malformed upstreams cannot grow memory unboundedly.
 try:
@@ -656,9 +711,7 @@ check(
 )
 _legacy_key = cl._cache_key("legacy-model", "s", "p", None)
 cl._cache_put(_legacy_key, {"text": "legacy text"})
-_legacy_hit = cl._try_cache_hit(
-    _legacy_key, "T2", "legacy-model", "zenmux", (), False, 1024, []
-)
+_legacy_hit = cl._try_cache_hit(_legacy_key, "T2", "legacy-model", "zenmux", (), False, 1024, [])
 check(
     "legacy text-only cache payload remains readable",
     _legacy_hit is not None and _legacy_hit["provider"] == "zenmux",
@@ -1252,9 +1305,7 @@ finally:
     _urlreq.urlopen = _orig_urlopen_struct
     del os.environ["DEEPSEEK_API_KEY"]
 
-_json_internal_fences = (
-    '```json\n{"code": "```python\\nprint(1)\\n```"}\n```'
-)
+_json_internal_fences = '```json\n{"code": "```python\\nprint(1)\\n```"}\n```'
 _parsed_fences = cl._try_parse_json(_json_internal_fences)
 check(
     "parse JSON with internal code fences",

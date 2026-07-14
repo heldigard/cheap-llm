@@ -599,6 +599,19 @@ def _call_ollama(
         num_ctx = 8192
     else:
         num_ctx = 32768
+    # num_ctx must hold the prompt AND the generated tokens. The char-based
+    # bracket above sizes for VRAM but ignores max_output_tokens, so a
+    # near-bracket-edge input + a large output budget silently truncates
+    # generation (Ollama caps num_predict at the remaining context). Floor on
+    # an input-token estimate + the requested output + slack. The //3 divisor
+    # is dense-conservative (code/JSON/logs run ~3 chars/token, not 4) so the
+    # floor is not under-sized on the very content this layer distills. The
+    # floor is capped at the largest bracket (32768) so a pathological very
+    # large input cannot push num_ctx past the pre-existing ceiling into OOM
+    # territory on a 16GB-VRAM 9B model — such inputs truncated before too.
+    est_input_tokens = total // 3
+    needed = est_input_tokens + max_output_tokens + 256
+    num_ctx = max(num_ctx, min(needed, 32768))
     payload = {
         "model": model,
         "prompt": prompt,
