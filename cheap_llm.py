@@ -143,8 +143,15 @@ CONTRACT: dict[str, object] = {
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
-    """``"1.2.3"`` → ``(1, 2, 3)`` for ordering; non-numeric parts ignored."""
-    return tuple(int(p) for p in v.split(".")[:3] if p.isdigit())
+    """``"1.2.3-beta"`` → ``(1, 2, 3)`` for ordering; non-numeric parts ignored."""
+    parts = []
+    for p in v.split(".")[:3]:
+        m = re.match(r"\d+", p)
+        if m:
+            parts.append(int(m.group(0)))
+        else:
+            parts.append(0)
+    return tuple(parts)
 
 
 def require(min_version: str | None = None) -> str:
@@ -327,8 +334,8 @@ DEEPSEEK_URL = "https://api.deepseek.com/v1"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
 
-def _strip_ollama_reasoning(text: str) -> str:
-    """Conservatively remove recoverable local reasoning traces."""
+def _strip_reasoning(text: str) -> str:
+    """Conservatively remove recoverable local/cloud reasoning traces."""
     if not text:
         return ""
     text = re.sub(r"<think\b[^>]*>.*?(</think\s*>|$)", "", text, flags=re.S | re.I)
@@ -594,7 +601,8 @@ def _call_ollama(
         num_ctx = 32768
     payload = {
         "model": model,
-        "prompt": f"{system}\n\n{prompt}",
+        "prompt": prompt,
+        "system": system,
         "stream": False,
         "think": False,
         "options": {
@@ -616,7 +624,7 @@ def _call_ollama(
         body = _read_json_response(r)
     latency = time.perf_counter() - t0
     return {
-        "text": _strip_ollama_reasoning(str(body.get("response", "")).strip()),
+        "text": _strip_reasoning(str(body.get("response", "")).strip()),
         "latency": latency,
         "input_tokens": body.get("prompt_eval_count", 0),
         "output_tokens": body.get("eval_count", 0),
@@ -687,7 +695,7 @@ def _openai_compat_call(
         body = _read_json_response(r)
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
-    text = (msg.get("content") or "").strip()
+    text = _strip_reasoning((msg.get("content") or "").strip())
     usage = body.get("usage", {})
     return {
         "text": text,
@@ -790,7 +798,7 @@ def _call_deepseek(
         body = _read_json_response(r)
     latency = time.perf_counter() - t0
     msg = body["choices"][0]["message"]
-    text = (msg.get("content") or "").strip()
+    text = _strip_reasoning((msg.get("content") or "").strip())
     usage = body.get("usage", {})
     in_tok = usage.get("prompt_tokens", 0) or 0
     out_tok = usage.get("completion_tokens", 0) or 0
@@ -845,7 +853,10 @@ def _try_parse_json(text: str) -> dict | None:
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        lines = [line for line in lines if not line.strip().startswith("```")]
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
         text = "\n".join(lines).strip()
     if "{" in text and "}" in text:
         text = text[text.find("{") : text.rfind("}") + 1]

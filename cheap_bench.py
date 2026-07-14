@@ -224,7 +224,8 @@ def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> d
     """Call local Ollama. Returns {text, latency, input_tokens, output_tokens}."""
     payload = {
         "model": model,
-        "prompt": f"{system}\n\n{prompt}",
+        "prompt": prompt,
+        "system": system,
         "stream": False,
         "options": {"temperature": 0.1, "num_ctx": 8192},
     }
@@ -362,8 +363,10 @@ def try_parse_json(text: str) -> dict | None:
     # strip code fences
     if text.startswith("```"):
         lines = text.splitlines()
-        # drop first line (```json or ```) and last ```
-        lines = [line for line in lines if not line.strip().startswith("```")]
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
         text = "\n".join(lines).strip()
     # first { ... last }
     if "{" in text and "}" in text:
