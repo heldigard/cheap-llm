@@ -88,13 +88,10 @@ from .cache import CACHE_DIR, CACHE_MAX_ENTRIES, _cache_get, _cache_key, _cache_
 
 # Re-export cascade
 from .cascade import (
-    JSON_HINT,
     _build_cascade,
     _resolve_local_model,
     _try_cache_hit,
     _try_live_hit,
-    _try_parse_json,
-    _validate,
     cheap_complete,
 )
 
@@ -158,3 +155,6 @@ from .transport import (
     _resolve_cost,
     _strip_reasoning,
 )
+
+# Re-export validation (extracted from cascade for cohesion)
+from .validation import JSON_HINT, _try_parse_json, _validate
