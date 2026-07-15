@@ -19,6 +19,7 @@ from .cache import _cache_get, _cache_key, _cache_put
 from .contract import _complete_result
 from .scrub import scrub_secrets
 from .transport import (
+    _PROVIDERS,
     DEFAULT_LOCAL_PRIMARY,
     DEFAULT_LOCAL_STRUCTURED,
     LEGACY_CASCADE,
@@ -76,6 +77,7 @@ def _build_cascade(
     prefer_local: bool,
     local_model: str | None,
     cloud_model: str | None,
+    cloud_provider: str | None = None,
 ) -> list[tuple[str, str, str, float]]:
     """Build the ordered (tier, model, provider, timeout) cascade."""
     # Import at call time so test mocks on cl._ollama_model_loaded take effect.
@@ -101,6 +103,16 @@ def _build_cascade(
             if not _pkg._ollama_model_loaded(resolved):
                 local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
             cascade.append(("T1", resolved, "ollama", local_timeout))
+        return cascade
+
+    if cloud_provider:
+        if not cloud_model:
+            raise ValueError("cloud_provider requires cloud_model")
+        if cloud_provider not in _PROVIDERS:
+            raise ValueError(f"unknown cloud_provider: {cloud_provider}")
+        if cloud_provider == "deepseek" and not cloud_model.startswith("deepseek/"):
+            raise ValueError("the deepseek provider requires a deepseek/* model")
+        cascade.append(("T2", cloud_model, cloud_provider, 18.0))
         return cascade
 
     if cloud_model:
@@ -130,8 +142,8 @@ def _resolve_local_model(
     if local_model:
         return local_model
     if require_json and schema_t:
-        return DEFAULT_LOCAL_STRUCTURED
-    return DEFAULT_LOCAL_PRIMARY
+        return os.environ.get("CHEAP_LLM_LOCAL_STRUCTURED_MODEL") or DEFAULT_LOCAL_STRUCTURED
+    return os.environ.get("CHEAP_LLM_LOCAL_MODEL") or DEFAULT_LOCAL_PRIMARY
 
 
 def _try_cache_hit(
@@ -246,6 +258,7 @@ def cheap_complete(
     model: str | None = None,
     cloud_model: str | None = None,
     max_output_tokens: int = 1024,
+    cloud_provider: str | None = None,
 ) -> dict:
     """Try T1 local, then T2 cloud, return the first good result.
 
@@ -269,6 +282,13 @@ def cheap_complete(
         or timeout_total <= 0
     ):
         raise ValueError("timeout_total must be a positive finite number")
+    if cloud_provider is not None:
+        if not isinstance(cloud_provider, str) or cloud_provider not in _PROVIDERS:
+            raise ValueError(f"cloud_provider must be one of: {', '.join(sorted(_PROVIDERS))}")
+        if not cloud_model:
+            raise ValueError("cloud_provider requires cloud_model")
+        if cloud_provider == "deepseek" and not cloud_model.startswith("deepseek/"):
+            raise ValueError("the deepseek provider requires a deepseek/* model")
 
     schema_t = tuple(schema_hint) if schema_hint else ()
     scrubbed_system = scrub_secrets(system)
@@ -281,7 +301,7 @@ def cheap_complete(
             eff_system += f" Required keys: {list(schema_t)}."
 
     local_model = _resolve_local_model(model, require_json, schema_t)
-    cascade = _build_cascade(prefer_local, local_model, cloud_model)
+    cascade = _build_cascade(prefer_local, local_model, cloud_model, cloud_provider)
     attempts: list[dict] = []
     deadline = time.perf_counter() + float(timeout_total)
 
@@ -291,7 +311,10 @@ def cheap_complete(
             break
         eff_timeout = min(per_timeout, remaining)
 
-        ckey = _cache_key(mdl, eff_system, scrubbed_prompt, schema_t, max_output_tokens)
+        # An explicit provider is a billing/trust boundary. Do not satisfy that
+        # request from another provider's model-level cache entry.
+        cache_model = f"{mdl}@{provider}" if cloud_provider and tier == "T2" else mdl
+        ckey = _cache_key(cache_model, eff_system, scrubbed_prompt, schema_t, max_output_tokens)
         hit = _try_cache_hit(
             ckey,
             tier,
@@ -313,6 +336,7 @@ def cheap_complete(
                 scrubbed_prompt,
                 eff_timeout,
                 max_output_tokens,
+                require_json,
             )
         except Exception as e:
             attempts.append(

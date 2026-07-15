@@ -16,18 +16,25 @@ import time
 import urllib.request
 
 from .cache import CACHE_DIR
-from .cascade import cheap_complete
+from .cascade import _build_cascade, _resolve_local_model, cheap_complete
 from .contract import __version__
-from .transport import _PROVIDERS, OLLAMA_URL, _read_json_response
+from .transport import _PROVIDERS, OLLAMA_URL, _public_attempt_error, _read_json_response
 
 
-def _probe_url(url: str, timeout: float = 2.0) -> dict:
-    """HEAD-bounded reachability probe."""
+def _probe_url(url: str, timeout: float = 2.0, key_env: str | None = None) -> dict:
+    """Authenticated, bounded model-list probe that never exposes key values."""
     t0 = time.perf_counter()
     try:
-        req = urllib.request.Request(url, method="HEAD")
+        headers = {"Accept": "application/json"}
+        if key_env:
+            key = os.environ.get(key_env, "")
+            if not key:
+                raise RuntimeError(f"{key_env} not set")
+            headers["Authorization"] = f"Bearer {key}"
+        req = urllib.request.Request(url, headers=headers, method="GET")
         # nosemgrep — url comes from _PROVIDERS registry (frozen constants)
         with urllib.request.urlopen(req, timeout=timeout) as r:
+            _read_json_response(r)
             return {
                 "reachable": True,
                 "latency_ms": int((time.perf_counter() - t0) * 1000),
@@ -39,8 +46,48 @@ def _probe_url(url: str, timeout: float = 2.0) -> dict:
             "reachable": False,
             "latency_ms": None,
             "status": None,
-            "error": f"{type(e).__name__}: {str(e)[:160]}",
+            "error": _public_attempt_error(e),
         }
+
+
+def _route_plan(
+    *,
+    prefer_local: bool = True,
+    model: str | None = None,
+    cloud_model: str | None = None,
+    cloud_provider: str | None = None,
+    require_json: bool = True,
+    schema_hint: list[str] | None = None,
+) -> dict:
+    """Return the effective route order without making a completion request."""
+    local_model = _resolve_local_model(model, require_json, tuple(schema_hint or ()))
+    cascade = _build_cascade(prefer_local, local_model, cloud_model, cloud_provider)
+    routes: list[dict] = []
+    for index, (tier, route_model, provider, timeout) in enumerate(cascade, start=1):
+        spec = _PROVIDERS.get(provider)
+        key_env = spec.endpoint.key_env if spec else None
+        routes.append(
+            {
+                "position": index,
+                "tier": tier,
+                "model": route_model,
+                "provider": provider,
+                "timeout": timeout,
+                "billing": "local" if provider == "ollama" else "payg",
+                "credential_env": key_env,
+                "credential_set": bool(key_env and os.environ.get(key_env)),
+            }
+        )
+    return {
+        "routes": routes,
+        "explicit_provider": cloud_provider,
+        "local_only": all(route["provider"] == "ollama" for route in routes),
+        "subscription_workers_in_scope": False,
+        "note": (
+            "CLI-seat subscriptions are routed by cli-orchestration/fusion-local; "
+            "cheap-llm cloud providers are PAYG even when using granted balance."
+        ),
+    }
 
 
 def _probe() -> dict:
@@ -79,9 +126,13 @@ def _probe() -> dict:
                 "latency_ms": None,
                 "status": None,
                 "error": None,
+                "billing": "payg",
             }
             continue
-        out["providers"][name] = _probe_url(spec.probe_url)
+        out["providers"][name] = _probe_url(
+            spec.probe_url, key_env=spec.endpoint.key_env
+        )
+        out["providers"][name]["billing"] = "payg"
     return out
 
 
@@ -147,8 +198,18 @@ def main() -> int:
             "(e.g. deepseek/deepseek-v4-flash)"
         ),
     )
+    p.add_argument(
+        "--cloud-provider",
+        choices=sorted(_PROVIDERS),
+        help="pin the T2 model to exactly one PAYG provider (requires --cloud-model)",
+    )
     p.add_argument("--no-json", action="store_true", help="don't require JSON output")
     p.add_argument("--probe", action="store_true", help="report availability")
+    p.add_argument(
+        "--route-plan",
+        action="store_true",
+        help="print effective routes and billing classes without making a completion",
+    )
     p.add_argument(
         "--cache",
         choices=["stats", "clear"],
@@ -163,6 +224,23 @@ def main() -> int:
         return 0
     if args.probe:
         print(json.dumps(_probe(), indent=2))
+        return 0
+    if args.route_plan:
+        if args.cloud_provider and not args.cloud_model:
+            p.error("--cloud-provider requires --cloud-model")
+        print(
+            json.dumps(
+                _route_plan(
+                    prefer_local=not args.no_local,
+                    model=args.model,
+                    cloud_model=args.cloud_model,
+                    cloud_provider=args.cloud_provider,
+                    require_json=not args.no_json,
+                    schema_hint=args.schema,
+                ),
+                indent=2,
+            )
+        )
         return 0
     if args.cache == "stats":
         print(json.dumps(_cache_stats(), indent=2))
@@ -188,6 +266,7 @@ def main() -> int:
         model=args.model,
         cloud_model=args.cloud_model,
         max_output_tokens=args.max_tokens,
+        cloud_provider=args.cloud_provider,
     )
     if args.json:
         print(json.dumps(result, indent=2))

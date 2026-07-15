@@ -114,6 +114,7 @@ def test_result_keys_present_on_success() -> None:
         prompt: str,
         timeout: float,
         max_output_tokens: int = 1024,
+        require_json: bool = False,
     ) -> dict:
         return {"text": '{"ok": 1}', "latency": 0.1, "api_cost": 0.0, "provider": provider}
 

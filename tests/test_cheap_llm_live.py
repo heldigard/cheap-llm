@@ -243,10 +243,20 @@ if LIVE:
             seen: dict = {}
             orig = cl._call_provider
 
-            def spy(model, provider, system, prompt, timeout, max_output_tokens):
+            def spy(
+                model, provider, system, prompt, timeout, max_output_tokens, require_json=False
+            ):
                 seen["prompt"] = prompt
                 seen["system"] = system
-                return orig(model, provider, system, prompt, timeout, max_output_tokens)
+                return orig(
+                    model,
+                    provider,
+                    system,
+                    prompt,
+                    timeout,
+                    max_output_tokens,
+                    require_json,
+                )
 
             cl._call_provider = spy
             try:

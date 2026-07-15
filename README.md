@@ -20,6 +20,9 @@ cd ~/cheap-llm && pip install -e .
 # Probe: what's available right now?
 cheap-llm --probe
 
+# Inspect route order, credential availability, and billing class without inference
+cheap-llm --route-plan
+
 # Run the cascade
 cheap-llm --system "Classify. JSON only." --prompt "ECONNREFUSED 127.0.0.1:5432"
 
@@ -33,6 +36,8 @@ cheap-llm --system "Classify." --prompt "..." --schema category --max-tokens 256
 # force cloud-only with --no-local, or choose an explicit T1 local model
 cheap-llm --system "Synthesize." --prompt "..." --cloud-model deepseek/deepseek-v4-flash
 cheap-llm --no-local --system "Synthesize." --prompt "..." --cloud-model deepseek/deepseek-v4-flash
+cheap-llm --no-local --system "Synthesize." --prompt "..." \
+  --cloud-model deepseek/deepseek-v4-flash --cloud-provider deepinfra
 cheap-llm --system "Classify." --prompt "..." --model my-local-model:latest
 ```
 
@@ -41,6 +46,8 @@ cheap-llm --system "Classify." --prompt "..." --model my-local-model:latest
 | Variable | Effect |
 |----------|--------|
 | `OLLAMA_URL` | Override the local Ollama endpoint (default `http://localhost:11434`) |
+| `CHEAP_LLM_LOCAL_MODEL` | Override the free-text Ollama model |
+| `CHEAP_LLM_LOCAL_STRUCTURED_MODEL` | Override the JSON/schema Ollama model independently |
 | `CHEAP_LLM_LOCAL_ONLY` | `1/true/yes/on` → T1 only, never call cloud (privacy mode) |
 | `CHEAP_LLM_LOCAL_COLD_TIMEOUT` | T1 budget in seconds when the model is not loaded in VRAM yet (default 25) |
 | `OPENROUTER_API_KEY` / `ZENMUX_API_KEY` / `DEEPSEEK_API_KEY` / `DEEPINFRA_API_KEY` | Enable the respective T2 providers |
@@ -56,6 +63,9 @@ out = cheap_complete(
     schema_hint=["category", "reason"],
     timeout_total=20.0,
     max_output_tokens=256,
+    # Optional trust/cost boundary: requires cloud_model and disables
+    # cross-provider fallback/cache reuse for T2.
+    cloud_provider="deepinfra",
 )
 # out: {text, model, tier, latency, cost, json_valid, fields_ok, attempts, error}
 ```
@@ -69,13 +79,22 @@ out = cheap_complete(
 | T2 | ling-2.6-1t | OpenRouter → ZenMux | $0.075/$0.625 | 12s |
 | T2 | gemini-3.1-flash-lite | OpenRouter → ZenMux | $0.25/$1.50 | 12s |
 | T2 | gpt-5.4-nano | OpenRouter | $0.20/$1.25 | 12s |
-| T2 | deepseek-v4-flash | OpenRouter (BYOK) | $0 | 12s |
+| T2 | deepseek-v4-flash | OpenRouter | $0.098/$0.196 | 12s |
 
 Default cascade: OpenRouter primary, ZenMux backup per benchmarked cheap model.
 Forced judgment models use provider-aware failover: DeepSeek first-party for
 `deepseek/*`, DeepInfra when that model family is available there, then
 OpenRouter and ZenMux. `cheap-llm` distills/classifies signals; it is not an
 architecture authority, coder, or substitute for the controller brain.
+
+All four cloud providers are PAYG routes. A provider API key is not a CLI-seat
+subscription, even when the account currently has granted/promotional balance.
+Subscription-backed workers (`codex-spark`, Antigravity, Kimi, Z.AI) remain in
+`cli-orchestration`/`fusion-local`; `cheap-llm` only judges or distills their
+evidence. Use `cloud_provider`/`--cloud-provider` when a request must not cross
+provider billing or trust boundaries. OpenRouter requests sort backing
+endpoints by price; direct DeepSeek disables its default thinking mode and uses
+the documented model-specific cache price.
 
 ## Output budgets and usage
 
@@ -134,6 +153,8 @@ project evolves without silently breaking fusion / web-research / the 7
 import cheap_llm
 cheap_llm.require("1.2")                      # needed for max_output_tokens
 out = cheap_llm.cheap_complete(system=..., prompt=..., max_output_tokens=256)
+
+cheap_llm.require("1.3")                      # needed for cloud_provider
 ```
 
 ## Consumers

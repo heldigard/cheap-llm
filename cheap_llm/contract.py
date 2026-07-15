@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "1.2.3"
+__version__ = "1.3.0"
 __all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]  # noqa: F822
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
@@ -43,6 +43,7 @@ CHEAP_COMPLETE_PARAMS: tuple[str, ...] = (
     "model",
     "cloud_model",
     "max_output_tokens",
+    "cloud_provider",
 )
 
 CONTRACT: dict[str, object] = {

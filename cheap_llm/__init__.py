@@ -30,7 +30,7 @@ TOP3_CASCADE + LEGACY_CASCADE (see those constants for the live order):
       ling-2.6-1t    @ openrouter → zenmux      ($0.075/$0.625 per M)
       gemini-3.1-flash-lite @ openrouter → zenmux ($0.25/$1.50 per M)
     then LEGACY_CASCADE safety net:
-      gpt-5.4-nano, deepseek-v4-flash  @ openrouter  (deepseek BYOK = $0)
+      gpt-5.4-nano, deepseek-v4-flash  @ openrouter  (PAYG)
 
 There is NO expensive "T3" fallback — every model above is cheap. If all
 tiers fail or return invalid output, cheap_complete returns an empty error
@@ -66,8 +66,9 @@ Decisions:
     cryptidbleh/gemma4-claude-opus-4.6; structured calls use SetneufPT/Qwopus.
     Keep these comments aligned with DEFAULT_LOCAL_PRIMARY/STRUCTURED below.
   - ling-2.6-flash is the primary cheap cloud (wins 4/5 tasks, $0.000018/call).
-  - deepseek-v4-flash via OpenRouter BYOK is free ($0, our key) — the cascade's
-    cost floor.
+  - Cloud API keys are PAYG capacity, not CLI-seat subscriptions. Subscription
+    workers belong to cli-orchestration/fusion-local and stay outside this
+    advisory transport.
   - gpt-5.4-nano replaced kimi-k2 in the safety net (R4: 5/5 stable, ~40%
     cheaper + faster, same quality). gpt-4.1-nano benchmarks higher but is an
     older generation → deprecation risk, kept as data only (fall-forward rule).
@@ -99,7 +100,7 @@ from .cascade import (
 
 # CLI helpers re-exported for tests and programmatic use; main is NOT
 # eagerly imported to avoid `-m cheap_llm.cli` conflicts.
-from .cli import _cache_clear, _cache_stats, _probe, _probe_url  # noqa: F401
+from .cli import _cache_clear, _cache_stats, _probe, _probe_url, _route_plan  # noqa: F401
 from .contract import (
     _RESULT_DEFAULTS,
     CHEAP_COMPLETE_PARAMS,
@@ -119,7 +120,9 @@ from .transport import (
     _PROVIDER_DISPATCH,
     _PROVIDERS,
     DEEPINFRA_ENDPOINT,
+    DEEPINFRA_PRICING,
     DEEPINFRA_URL,
+    DEEPSEEK_PRICING,
     DEEPSEEK_URL,
     DEFAULT_LOCAL_PRIMARY,
     DEFAULT_LOCAL_STRUCTURED,
@@ -135,6 +138,7 @@ from .transport import (
     ZENMUX_DEFAULT_MULTIPLIER,
     ZENMUX_ENDPOINT,
     ZENMUX_MODEL_MULTIPLIERS,
+    ZENMUX_MODEL_PRICING,
     ZENMUX_URL,
     _call_deepinfra,
     _call_deepseek,

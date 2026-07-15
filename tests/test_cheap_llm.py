@@ -176,7 +176,7 @@ check(
     "moonshotai/kimi-k2" not in [m for m, _ in cl.TOP3_CASCADE + cl.LEGACY_CASCADE],
 )
 check(
-    "deepseek-v4-flash still in LEGACY (BYOK $0)",
+    "deepseek-v4-flash still in LEGACY PAYG fallback",
     ("deepseek/deepseek-v4-flash", "openrouter") in cl.LEGACY_CASCADE,
 )
 check(
@@ -207,9 +207,35 @@ check(
     detail=f"got {cl.DEFAULT_LOCAL_STRUCTURED}",
 )
 
+_old_local_override = os.environ.get("CHEAP_LLM_LOCAL_MODEL")
+_old_structured_override = os.environ.get("CHEAP_LLM_LOCAL_STRUCTURED_MODEL")
+try:
+    os.environ["CHEAP_LLM_LOCAL_MODEL"] = "operator/text-model:latest"
+    os.environ["CHEAP_LLM_LOCAL_STRUCTURED_MODEL"] = "operator/json-model:latest"
+    check(
+        "local text model honors environment override",
+        cl._resolve_local_model(None, False, ()) == "operator/text-model:latest",
+    )
+    check(
+        "local structured model honors separate environment override",
+        cl._resolve_local_model(None, True, ("field",)) == "operator/json-model:latest",
+    )
+    check(
+        "explicit local model beats environment overrides",
+        cl._resolve_local_model("explicit:latest", True, ("field",)) == "explicit:latest",
+    )
+finally:
+    if _old_local_override is None:
+        os.environ.pop("CHEAP_LLM_LOCAL_MODEL", None)
+    else:
+        os.environ["CHEAP_LLM_LOCAL_MODEL"] = _old_local_override
+    if _old_structured_override is None:
+        os.environ.pop("CHEAP_LLM_LOCAL_STRUCTURED_MODEL", None)
+    else:
+        os.environ["CHEAP_LLM_LOCAL_STRUCTURED_MODEL"] = _old_structured_override
+
 # --- CRITICAL regression: secrets are scrubbed on the prefer_local path ---
-# DeepSeek first-party cache-aware cost (2026-07-02: cache-hit = 1/10 of the
-# input list rate per the published V4 pricing — was hardcoded 0.029).
+# DeepSeek first-party cache-aware cost uses the exact model-specific rate.
 print("\n=== UNIT: deepseek cache-aware cost ===")
 
 
@@ -244,14 +270,19 @@ _urlreq.urlopen = _fake_urlopen_factory(_ds_body, _ds_payload)
 try:
     os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
     _ds = cl._call_deepseek(
-        "deepseek/deepseek-v4-flash", "s", "p", timeout=5, max_output_tokens=384
+        "deepseek/deepseek-v4-flash",
+        "s",
+        "p",
+        timeout=5,
+        max_output_tokens=384,
+        require_json=True,
     )
 finally:
     _urlreq.urlopen = _orig_urlopen
-# fresh 400K @ $0.14/M + cached 600K @ $0.014/M + out 100K @ $0.28/M
-_expected = (400_000 * 0.14 + 600_000 * 0.014 + 100_000 * 0.28) / 1_000_000
+# fresh 400K @ $0.14/M + cached 600K @ $0.0028/M + out 100K @ $0.28/M
+_expected = (400_000 * 0.14 + 600_000 * 0.0028 + 100_000 * 0.28) / 1_000_000
 check(
-    "deepseek cost: cached input billed at 1/10 of input rate",
+    "deepseek cost: cached input uses exact V4 Flash rate",
     abs(_ds["api_cost"] - _expected) < 1e-9,
     detail=f"got {_ds['api_cost']:.6f} expected {_expected:.6f}",
 )
@@ -260,6 +291,11 @@ check(
     _ds["text"] == "ok" and _ds["provider"] == "deepseek",
 )
 check("deepseek receives output budget", _ds_payload.get("max_tokens") == 384)
+check("deepseek disables thinking", _ds_payload.get("thinking") == {"type": "disabled"})
+check(
+    "deepseek enables native JSON mode when required",
+    _ds_payload.get("response_format") == {"type": "json_object"},
+)
 
 # Ollama uses the equivalent num_predict option so local generation obeys the
 # same public budget as cloud transports.
@@ -463,6 +499,14 @@ rep = cl._resolve_cost(
     "inclusionai/ling-2.6-flash", {"prompt_tokens": 10, "completion_tokens": 10, "cost": 0.000123}
 )
 check("reported cost (>0) returned as-is", abs(rep - 0.000123) < 1e-12, detail=f"rep={rep}")
+di_rep = cl._resolve_cost(
+    "provider/new-model", {"estimated_cost": 0.000321}, provider="deepinfra"
+)
+check(
+    "deepinfra estimated_cost returned as-is",
+    di_rep is not None and abs(di_rep - 0.000321) < 1e-12,
+    detail=f"cost={di_rep}",
+)
 
 
 # =================================================================
@@ -477,7 +521,7 @@ def _stub_cascade(provider_results: dict[tuple[str, str], list[Any]]):
     """
     log: list[tuple[str, str]] = []
 
-    def fake_call(model, provider, system, prompt, timeout, max_output_tokens):
+    def fake_call(model, provider, system, prompt, timeout, max_output_tokens, require_json=False):
         log.append((model, provider))
         outcomes = provider_results.get((model, provider), [])
         if outcomes:
@@ -526,7 +570,7 @@ log, _restore_unused = _stub_cascade(
 seen_budgets: list[int] = []
 
 
-def _t1_collector(model, provider, sys, prompt, timeout, max_output_tokens):
+def _t1_collector(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     log.append((model, provider))
     seen_budgets.append(max_output_tokens)
     return _ok('{"category": "debug"}', provider=provider)
@@ -561,7 +605,7 @@ _restore_call_provider()
 
 
 # M2: OpenRouter down on ling-2.6-flash, ZenMux catches
-def _m2_call(model, provider, sys, prompt, timeout, max_output_tokens):
+def _m2_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     if model == "inclusionai/ling-2.6-flash" and provider == "openrouter":
         raise urllib.error.HTTPError("https://x", 503, "Service Unavailable", cast(Any, {}), None)
     if model == "inclusionai/ling-2.6-flash" and provider == "zenmux":
@@ -588,7 +632,7 @@ _restore_call_provider()
 
 
 # M3: Both ling models fail on both providers → gemini catches
-def _m3_call(model, provider, sys, prompt, timeout, max_output_tokens):
+def _m3_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     if "ling" in model:
         raise RuntimeError("ling model unavailable")
     if model == "google/gemini-3.1-flash-lite" and provider == "openrouter":
@@ -636,7 +680,7 @@ _restore_call_provider()
 call_count = {"n": 0}
 
 
-def _m5_call(model, provider, sys, prompt, timeout, max_output_tokens):
+def _m5_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     call_count["n"] += 1
     return _ok('{"category": "debug"}')
 
@@ -678,6 +722,39 @@ check("cached result has cached=True", out2.get("cached") is True)
 check(
     "different output budget bypasses incompatible cache entry",
     n_after_different_budget == n_after_second + 1,
+)
+_restore_call_provider()
+
+# Explicit provider requests must not reuse another provider's model-level
+# cache entry: provider pinning is a billing/trust boundary.
+_explicit_model = "deepseek/deepseek-v4-flash"
+cl._cache_put(
+    cl._cache_key(_explicit_model, "C.", "provider-boundary", (), 1024),
+    {"text": "generic cache", "provider": "openrouter", "tier": "T2"},
+)
+_explicit_calls: list[str] = []
+
+
+def _explicit_provider_call(
+    model, provider, sys, prompt, timeout, max_output_tokens, require_json=False
+):
+    _explicit_calls.append(provider)
+    return _ok("deepinfra result", provider=provider)
+
+
+cl._call_provider = _explicit_provider_call
+out = cl.cheap_complete(
+    system="C.",
+    prompt="provider-boundary",
+    prefer_local=False,
+    require_json=False,
+    cloud_model=_explicit_model,
+    cloud_provider="deepinfra",
+)
+check(
+    "explicit provider bypasses cross-provider cache",
+    _explicit_calls == ["deepinfra"] and out["provider"] == "deepinfra" and not out["cached"],
+    detail=f"calls={_explicit_calls} out={out}",
 )
 _restore_call_provider()
 
@@ -748,7 +825,7 @@ for _bad_timeout in (0, -1, True, float("nan"), float("inf"), -float("inf")):
 
 
 # M6: Invalid JSON triggers cascade fallthrough
-def _m6_call(model, provider, sys, prompt, timeout, max_output_tokens):
+def _m6_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     if model == "inclusionai/ling-2.6-flash":
         return _ok("not valid json at all")  # fails JSON contract
     if model == "inclusionai/ling-2.6-1t":
@@ -770,7 +847,7 @@ _restore_call_provider()
 
 
 # M7: require_json=False (text mode) accepts non-JSON
-def _m7_call(model, provider, sys, prompt, timeout, max_output_tokens):
+def _m7_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     if model == "inclusionai/ling-2.6-flash":
         return _ok("plain text response, no JSON")
     return _ok("not reached")
@@ -792,7 +869,7 @@ _restore_call_provider()
 
 # M8: prefer_local=True + schema JSON -> configured structured T1 is attempted
 # FIRST and resolves there (1 attempt, no cloud call).
-def _m8_call(model, provider, sys, prompt, timeout, max_output_tokens):
+def _m8_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
     if provider == "ollama":
         return _ok('{"category": "debug"}', provider=provider)
     return _ok('{"category": "should not reach cloud"}', provider=provider)
@@ -910,6 +987,10 @@ check(
     "OpenAI-compatible transport receives output budget",
     _openrouter_payload["max_tokens"] == 288,
 )
+check(
+    "OpenRouter sorts backing providers by price",
+    _openrouter_payload.get("provider") == {"sort": "price"},
+)
 
 # _Endpoint dataclass exists and is usable
 check("_Endpoint dataclass exists", hasattr(cl, "_Endpoint"))
@@ -966,6 +1047,28 @@ check(
     providers == ["deepseek", "openrouter", "zenmux"],
     detail=f"got {providers}",
 )
+
+explicit_di = cl._build_cascade(
+    prefer_local=False,
+    local_model=None,
+    cloud_model="deepseek/deepseek-v4-flash",
+    cloud_provider="deepinfra",
+)
+check(
+    "cascade explicit provider: one isolated T2 route",
+    explicit_di == [("T2", "deepseek/deepseek-v4-flash", "deepinfra", 18.0)],
+    detail=f"got {explicit_di}",
+)
+try:
+    cl._build_cascade(
+        prefer_local=False,
+        local_model=None,
+        cloud_model=None,
+        cloud_provider="deepinfra",
+    )
+    check("cascade explicit provider requires cloud model", False, detail="no ValueError")
+except ValueError:
+    check("cascade explicit provider requires cloud model", True)
 
 # cold-start T1 budget: model not loaded -> extended timeout; warm -> fast
 _orig_loaded = cl._ollama_model_loaded
@@ -1111,6 +1214,33 @@ try:
 finally:
     os.environ.pop("DEEPINFRA_API_KEY", None)
 
+# DeepInfra native JSON mode and provider-specific price fallback.
+_deepinfra_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {
+        "choices": [{"message": {"content": '{"ok": true}'}}],
+        "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 100_000},
+    },
+    _deepinfra_payload,
+)
+try:
+    os.environ["DEEPINFRA_API_KEY"] = "test-key"
+    _di = cl._call_deepinfra(
+        "deepseek/deepseek-v4-flash", "s", "p", timeout=5, require_json=True
+    )
+finally:
+    _urlreq.urlopen = _orig_urlopen
+    os.environ.pop("DEEPINFRA_API_KEY", None)
+check(
+    "deepinfra enables native JSON mode",
+    _deepinfra_payload.get("response_format") == {"type": "json_object"},
+)
+check(
+    "deepinfra fallback cost uses provider-specific listing",
+    abs(_di["api_cost"] - ((1_000_000 * 0.09 + 100_000 * 0.18) / 1_000_000)) < 1e-9,
+    detail=f"cost={_di['api_cost']}",
+)
+
 
 # =================================================================
 # UNIT: 1.2.1 regressions — JSON hint without schema + cache shape guard
@@ -1123,7 +1253,7 @@ print("\n=== UNIT: 1.2.1 regression guards ===")
 _seen_systems: list[str] = []
 
 
-def _sys_collector(model, provider, system, prompt, timeout, max_output_tokens):
+def _sys_collector(model, provider, system, prompt, timeout, max_output_tokens, require_json=False):
     _seen_systems.append(system)
     return _ok('{"anything": "goes"}', provider=provider)
 
@@ -1209,6 +1339,36 @@ _probe_keys = set(cl._probe())
 for _pk in ("zenmux_key_set", "deepseek_key_set", "local_only", "cache_entries"):
     check(f"_probe exposes {_pk}", _pk in _probe_keys)
 
+# Provider health probes use authenticated GET, parse a bounded JSON object,
+# and report no credential value.
+_probe_seen: dict = {}
+
+
+def _fake_probe_open(req, timeout=None):
+    _probe_seen["method"] = req.get_method()
+    _probe_seen["authorization"] = req.get_header("Authorization")
+    return _FakeResp(b'{"data": []}')
+
+
+_urlreq.urlopen = _fake_probe_open
+try:
+    os.environ["CHEAP_LLM_TEST_KEY"] = "synthetic-test-value"
+    _probe_result = cl._probe_url(
+        "https://provider.invalid/v1/models", timeout=1, key_env="CHEAP_LLM_TEST_KEY"
+    )
+finally:
+    _urlreq.urlopen = _orig_urlopen
+    os.environ.pop("CHEAP_LLM_TEST_KEY", None)
+check(
+    "provider probe uses authenticated GET",
+    _probe_result["reachable"] is True
+    and _probe_seen == {
+        "method": "GET",
+        "authorization": "Bearer synthetic-test-value",
+    },
+    detail=f"seen={_probe_seen} result={_probe_result}",
+)
+
 
 # =================================================================
 # CLI: --probe works standalone (regression 2026-07-02: --system/--prompt
@@ -1236,6 +1396,37 @@ except json.JSONDecodeError:
         False,
         detail=f"stdout={_probe_proc.stdout[:120]}",
     )
+_route_proc = subprocess.run(
+    [
+        sys.executable,
+        "-m",
+        "cheap_llm",
+        "--route-plan",
+        "--no-local",
+        "--no-json",
+        "--cloud-model",
+        "deepseek/deepseek-v4-flash",
+        "--cloud-provider",
+        "deepinfra",
+    ],
+    capture_output=True,
+    text=True,
+    timeout=15,
+    cwd=PROJECT_ROOT,
+)
+try:
+    _route_out = json.loads(_route_proc.stdout)
+except json.JSONDecodeError:
+    _route_out = {}
+check(
+    "--route-plan exposes one PAYG provider route without completion",
+    _route_proc.returncode == 0
+    and len(_route_out.get("routes", [])) == 1
+    and _route_out["routes"][0]["provider"] == "deepinfra"
+    and _route_out["routes"][0]["billing"] == "payg"
+    and _route_out.get("subscription_workers_in_scope") is False,
+    detail=f"rc={_route_proc.returncode} out={_route_out} err={_route_proc.stderr[:120]}",
+)
 _noargs_proc = subprocess.run(
     [sys.executable, "-m", "cheap_llm"],
     capture_output=True,

@@ -9,7 +9,7 @@ actually wins on the actual prompts the pipeline will throw at it.
 Candidate models (all in our provider catalog — see CANDIDATES below for the live list):
   - cryptidbleh/gemma4-claude-opus-4.6 (local Ollama, free, private) — T1
   - ling-2.6-flash / ling-2.6-1t / gemini-3.1-flash-lite (OpenRouter cloud)
-  - gpt-5.4-nano / deepseek-v4-flash (OpenRouter; deepseek BYOK = $0)
+  - gpt-5.4-nano / deepseek-v4-flash (OpenRouter PAYG)
 
 Scoring (per task, 0-100):
   - json_valid      : 0 or 25  (valid JSON, structure check)
@@ -70,7 +70,7 @@ CANDIDATES: list[dict] = [
         "output": 0.0,
     },
     # T2 cloud — pricing per OpenRouter public listing (NOT usage.cost, which
-    # reports $0 for gemini/promo models). deepseek is BYOK = genuinely $0.
+    # reports $0 for some promo models). Every cloud candidate is PAYG.
     # Pruned from this list (see DO-NOT-RE-TEST ledger in
     # topics/tested-models.md): kimi-k2 (superseded by gpt-5.4-nano),
     # gpt-4.1-nano (old 4.1 gen, deprecation risk despite high score),
@@ -113,9 +113,8 @@ CANDIDATES: list[dict] = [
         "kind": "cloud",
         "provider": "openrouter",
         "env": "OPENROUTER_API_KEY",
-        "input": 0.14,
-        "output": 0.28,
-        "byok": True,
+        "input": 0.098,
+        "output": 0.196,
     },
 ]
 
@@ -338,14 +337,9 @@ def call_candidate(cand: dict, task: dict, timeout: float) -> dict:
         out_t = out.get("output_tokens", 0)
         # Trust the PUBLIC LISTING price, not usage.cost — OpenRouter returns
         # usage.cost=0 for some promo/preview models (e.g. gemini-3.1-flash-lite
-        # is $0.25/$1.50 real, API reports $0) and for BYOK models. Listing
-        # estimate is the production truth EXCEPT for BYOK models (we supply
-        # our own key → genuinely $0 regardless of listing). This keeps the
-        # leaderboard's Cost column honest.
-        if cand.get("byok"):
-            out["cost"] = 0.0
-        else:
-            out["cost"] = (inp * cand["input"] + out_t * cand["output"]) / 1_000_000
+        # is $0.25/$1.50 real, API reports $0). API keys consume PAYG or granted
+        # balance; they are never treated as a zero-cost subscription seat.
+        out["cost"] = (inp * cand["input"] + out_t * cand["output"]) / 1_000_000
         return out
     except Exception as e:
         return {

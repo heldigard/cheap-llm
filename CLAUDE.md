@@ -42,7 +42,7 @@ T1 LOCAL  (free, private)    6s  — cryptidbleh/gemma4-claude-opus-4.6 text /
                                     SetneufPT/Qwopus structured JSON (Ollama)
 T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3.1-flash-lite
                                     (OpenRouter primary, ZenMux failover)
-    LEGACY safety net             — gpt-5.4-nano, deepseek-v4-flash (BYOK $0)
+    LEGACY safety net             — gpt-5.4-nano, deepseek-v4-flash (PAYG)
 ```
 
 ## Entry points
@@ -58,17 +58,21 @@ T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3
 ```
 cheap-llm --version                            # print SemVer and exit
 cheap-llm --probe                              # show what's available
+cheap-llm --route-plan                         # no-inference route/billing plan
 cheap-llm --system "X" --prompt "Y"            # run cascade, print text
 cheap-llm --system "X" --prompt "Y" --json     # full JSON envelope
 cheap-llm --system "X" --prompt "Y" --schema f1 f2  # with field validation
 cheap-llm --system "X" --prompt "Y" --max-tokens 256 # bound every attempt
 cheap-llm --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash  # pin T2 fallback
 cheap-llm --no-local --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash  # cloud-only
+cheap-llm --no-local --system "X" --prompt "Y" --cloud-model deepseek/deepseek-v4-flash --cloud-provider deepinfra
 cheap-llm --system "X" --prompt "Y" --model my-model:latest  # explicit T1 local model
 ```
 
 Env knobs: `OLLAMA_URL` (endpoint override), `CHEAP_LLM_LOCAL_ONLY=1` (never
-call cloud), `CHEAP_LLM_LOCAL_COLD_TIMEOUT` (cold-VRAM T1 budget, default 25s).
+call cloud), `CHEAP_LLM_LOCAL_MODEL`/`CHEAP_LLM_LOCAL_STRUCTURED_MODEL`
+(independent T1 overrides), `CHEAP_LLM_LOCAL_COLD_TIMEOUT` (cold-VRAM T1
+budget, default 25s).
 
 ## Public API contract (SemVer) — ecosystem decoupling
 
@@ -166,3 +170,7 @@ pattern).
 - **Pinned T2 fallback**: `cheap_complete(cloud_model="deepseek/deepseek-v4-flash")`;
   add `prefer_local=False` when the call must be cloud-only.
   for judgment-heavy tasks (1M ctx, cache-aware cost).
+- **Pinned provider boundary**: add `cloud_provider="deepinfra"` (or
+  `openrouter`, `zenmux`, `deepseek`) to prevent cross-provider fallback and
+  cache reuse. Every API provider is PAYG; subscription seats are consumed by
+  `cli-orchestration`/`fusion-local`, not by this signal layer.

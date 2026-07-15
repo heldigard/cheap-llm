@@ -39,8 +39,8 @@ LOCAL_COLD_TIMEOUT = float(os.environ.get("CHEAP_LLM_LOCAL_COLD_TIMEOUT", "25"))
 # transport also enforces a byte ceiling before decoding or JSON parsing.
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
-# Reasoning control: empty (all cascade models are non-reasoning or
-# already have reasoning disabled by default).
+# Reasoning control for OpenAI-compatible aggregators. Direct DeepSeek uses
+# its provider-specific ``thinking`` toggle below.
 REASONING_EFFORT_OVERRIDES: dict[str, str] = {}
 
 # Public listing price per 1M tokens (input, output) in USD — used to
@@ -54,7 +54,26 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "google/gemini-3.1-flash-lite": (0.25, 1.50),
     "openai/gpt-5.4-nano": (0.20, 1.25),
     "moonshotai/kimi-k2": (0.57, 2.30),  # kept for cost lookup only
-    "deepseek/deepseek-v4-flash": (0.14, 0.28),
+    "deepseek/deepseek-v4-flash": (0.098, 0.196),
+    "deepseek/deepseek-v4-pro": (0.435, 0.87),
+}
+
+# Provider-specific prices avoid pretending the same model costs the same at
+# every endpoint. Direct DeepSeek prices include its unusually deep cache
+# discount; DeepInfra slugs use the public Flex listing. Values are USD per 1M
+# tokens and are only fallbacks when the response has no positive usage.cost.
+DEEPSEEK_PRICING: dict[str, tuple[float, float, float]] = {
+    # model: (fresh input, cached input, output)
+    "deepseek/deepseek-v4-flash": (0.14, 0.0028, 0.28),
+    "deepseek/deepseek-v4-pro": (0.435, 0.003625, 0.87),
+}
+DEEPINFRA_PRICING: dict[str, tuple[float, float]] = {
+    "deepseek-ai/DeepSeek-V4-Flash": (0.09, 0.18),
+    "deepseek-ai/DeepSeek-V4-Pro": (1.30, 2.60),
+    "Qwen/Qwen3.7-Max": (2.50, 7.50),
+    "zai-org/GLM-5.2": (0.93, 3.00),
+    "XiaomiMiMo/MiMo-V2.5-Pro": (1.00, 3.00),
+    "moonshotai/Kimi-K2.7-Code": (0.74, 3.50),
 }
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
@@ -63,12 +82,15 @@ DEEPSEEK_URL = "https://api.deepseek.com/v1"
 DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
-# Per-model ZenMux pricing multipliers (verified 2026-06-19 against
-# zenmux.ai/pricing). Default 5x for any model not listed; ling-2.6-flash is
-# 10x OR, ling-2.6-1t is 4x OR.
+# Exact ZenMux public catalog prices, when published. The multiplier fallback
+# remains deliberately conservative for models whose catalog omits pricing.
+ZENMUX_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "inclusionai/ling-2.6-1t": (0.1318155, 1.0984625),
+    "google/gemini-3.1-flash-lite": (0.25, 1.50),
+    "deepseek/deepseek-v4-flash": (0.14, 0.28),
+}
 ZENMUX_MODEL_MULTIPLIERS: dict[str, float] = {
     "inclusionai/ling-2.6-flash": 10.0,
-    "inclusionai/ling-2.6-1t": 4.0,
 }
 ZENMUX_DEFAULT_MULTIPLIER = 5.0
 
@@ -184,7 +206,7 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
             url=OPENROUTER_URL,
             key_env="OPENROUTER_API_KEY",
             provider_label="openrouter",
-            extra_headers={"X-Title": "cheap-llm-cascade"},
+            extra_headers={"X-OpenRouter-Title": "cheap-llm-cascade"},
         ),
         probe_url=f"{OPENROUTER_URL}/models",
     ),
@@ -210,6 +232,7 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
             "mimo-v2.5-pro": "XiaomiMiMo/MiMo-V2.5-Pro",
             "kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
         },
+        probe_url=f"{DEEPINFRA_URL}/models",
     ),
     "deepseek": _ProviderSpec(
         endpoint=_Endpoint(
@@ -258,16 +281,22 @@ def _resolve_cost(model: str, usage: dict, provider: str = "openrouter") -> floa
     only when we have neither a reported cost nor a known price.
     """
     reported = usage.get("cost")
+    if reported is None and provider == "deepinfra":
+        reported = usage.get("estimated_cost")
     if reported is not None and reported > 0 and provider != "zenmux":
         return reported
-    price = MODEL_PRICING.get(model)
+    price = DEEPINFRA_PRICING.get(model) if provider == "deepinfra" else None
+    if provider == "zenmux":
+        price = ZENMUX_MODEL_PRICING.get(model)
+    if price is None:
+        price = MODEL_PRICING.get(model)
     if not price:
         return reported  # may be None/0 — caller treats falsy as 0.0
     in_tok = usage.get("prompt_tokens", 0) or 0
     out_tok = usage.get("completion_tokens", 0) or 0
     in_per_m, out_per_m = price
     raw_cost = (in_tok * in_per_m + out_tok * out_per_m) / 1_000_000.0
-    if provider == "zenmux":
+    if provider == "zenmux" and model not in ZENMUX_MODEL_PRICING:
         multiplier = ZENMUX_DEFAULT_MULTIPLIER
         for needle, mult in ZENMUX_MODEL_MULTIPLIERS.items():
             if needle in model:
@@ -313,6 +342,7 @@ def _call_ollama(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
     # Smaller ctx for short tasks (faster on 16GB VRAM, where memory bandwidth
     # is the bottleneck — 9B at q8 leaves little room for big KV cache).
@@ -349,6 +379,8 @@ def _call_ollama(
             "num_predict": max_output_tokens,
         },
     }
+    if require_json:
+        payload["format"] = "json"
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/generate",
         data=json.dumps(payload).encode("utf-8"),
@@ -375,6 +407,7 @@ def _openai_compat_call(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
     """Shared OpenAI-compatible chat-completions POST.
 
@@ -399,6 +432,15 @@ def _openai_compat_call(
     }
     if model in REASONING_EFFORT_OVERRIDES:
         payload["reasoning_effort"] = REASONING_EFFORT_OVERRIDES[model]
+    # DeepInfra documents native JSON-object mode and OpenRouter's current
+    # catalog advertises response_format for every benchmark-selected model.
+    # ZenMux remains prompt-only because its catalog omits parameter support.
+    if require_json and endpoint.provider_label in {"deepinfra", "openrouter"}:
+        payload["response_format"] = {"type": "json_object"}
+    if endpoint.provider_label == "openrouter":
+        # cheap-llm optimizes signal-per-dollar; make the aggregator choose the
+        # lowest-price healthy endpoint for the already benchmarked model.
+        payload["provider"] = {"sort": "price"}
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -433,10 +475,17 @@ def _call_deepinfra(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
     resolved_model = _normalize_deepinfra_model(model)
     return _openai_compat_call(
-        DEEPINFRA_ENDPOINT, resolved_model, system, prompt, timeout, max_output_tokens
+        DEEPINFRA_ENDPOINT,
+        resolved_model,
+        system,
+        prompt,
+        timeout,
+        max_output_tokens,
+        require_json,
     )
 
 
@@ -446,9 +495,16 @@ def _call_openrouter(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
     return _openai_compat_call(
-        OPENROUTER_ENDPOINT, model, system, prompt, timeout, max_output_tokens
+        OPENROUTER_ENDPOINT,
+        model,
+        system,
+        prompt,
+        timeout,
+        max_output_tokens,
+        require_json,
     )
 
 
@@ -458,8 +514,11 @@ def _call_zenmux(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
-    return _openai_compat_call(ZENMUX_ENDPOINT, model, system, prompt, timeout, max_output_tokens)
+    return _openai_compat_call(
+        ZENMUX_ENDPOINT, model, system, prompt, timeout, max_output_tokens, require_json
+    )
 
 
 def _call_deepseek(
@@ -468,17 +527,15 @@ def _call_deepseek(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
     """DeepSeek FIRST-PARTY call (api.deepseek.com). OpenAI-compatible.
 
-    NOTE 2026-07-02: OpenRouter now lists v4-flash at $0.089/$0.18 (below the
-    first-party $0.14/$0.28 fresh rate), but first-party keeps the 1/10
-    cache-hit discount ($0.014/M cached input) — for repeated-prefix workloads
-    (fixed system prompts, iterative synthesis) first-party still wins overall,
-    so it stays FIRST in the forced-cloud_model order. Cache-aware cost:
-    DeepSeek reports prompt_cache_hit_tokens,
-    so cached prompt input is priced at the discounted rate ($0.029/M for Flash
-    vs $0.14/M fresh) — a saving intermediaries obscure. Slug mapping: our
+    OpenRouter currently lists V4 Flash below the first-party fresh rate, but
+    direct DeepSeek exposes a much deeper cache discount ($0.0028/M versus
+    $0.14/M fresh). Repeated-prefix workloads may therefore be cheaper direct,
+    so it stays first in the automatic pinned-model order. DeepSeek reports
+    prompt_cache_hit_tokens and pricing is model-specific. Slug mapping: our
     catalog uses the OpenRouter form "deepseek/deepseek-v4-flash"; the direct
     API wants "deepseek-v4-flash" (strip the "deepseek/" provider prefix).
     """
@@ -495,7 +552,12 @@ def _call_deepseek(
         "temperature": 0.1,
         "max_tokens": max_output_tokens,
         "stream": False,
+        # V4 defaults to thinking=enabled. This layer distills short signals;
+        # hidden reasoning adds latency and spend without authority or value.
+        "thinking": {"type": "disabled"},
     }
+    if require_json:
+        payload["response_format"] = {"type": "json_object"}
     req = urllib.request.Request(
         f"{DEEPSEEK_URL}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
@@ -512,10 +574,13 @@ def _call_deepseek(
     in_tok = usage.get("prompt_tokens", 0) or 0
     out_tok = usage.get("completion_tokens", 0) or 0
     cached = usage.get("prompt_cache_hit_tokens") or usage.get("prompt_cached_tokens") or 0
-    price = MODEL_PRICING.get(model, (0.14, 0.28))
+    fresh_rate, cached_rate, output_rate = DEEPSEEK_PRICING.get(
+        model, DEEPSEEK_PRICING["deepseek/deepseek-v4-flash"]
+    )
     fresh_in = max(in_tok - cached, 0)
-    cached_rate = price[0] / 10.0
-    cost = (fresh_in * price[0] + cached * cached_rate + out_tok * price[1]) / 1_000_000.0
+    cost = (
+        fresh_in * fresh_rate + cached * cached_rate + out_tok * output_rate
+    ) / 1_000_000.0
     return {
         "text": text,
         "latency": latency,
@@ -543,10 +608,11 @@ def _call_provider(
     prompt: str,
     timeout: float,
     max_output_tokens: int = 1024,
+    require_json: bool = False,
 ) -> dict:
     """Dispatch a (model, provider) call. Raises on transport error or
     unknown provider."""
     fn = _PROVIDER_DISPATCH.get(provider)
     if fn is None:
         raise ValueError(f"unknown provider: {provider}")
-    return fn(model, system, prompt, timeout, max_output_tokens)
+    return fn(model, system, prompt, timeout, max_output_tokens, require_json)
