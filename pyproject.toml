@@ -68,3 +68,9 @@ select = ["E", "F", "W", "I"]
 [tool.ruff.lint.per-file-ignores]
 # __init__.py re-exports internal symbols for backward compat (tests, shim, consumers)
 "cheap_llm/__init__.py" = ["F401"]
+# Test harness split: _checks_* run top-level via `from _testlib import *`
+# (verbatim bodies); F403/F405 are inherent to that pattern, F401 covers
+# side-effect imports + re-exported stdlib modules in _testlib.
+"tests/_testlib.py" = ["F401", "F403", "F405"]
+"tests/_checks_*.py" = ["F401", "F403", "F405"]
+"tests/test_cheap_llm.py" = ["F401", "I001"]  # import order = section run order, not alphabetical
