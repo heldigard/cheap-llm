@@ -38,6 +38,9 @@ cl: Any = importlib.util.module_from_spec(_spec)
 sys.modules["cheap_llm"] = cl  # needed so @dataclass can resolve cls.__module__
 _spec.loader.exec_module(cl)
 
+# Save and clear DeepInfra API key to keep unit/mock test assertions predictable
+_actual_deepinfra_key = os.environ.pop("DEEPINFRA_API_KEY", None)
+
 PASS = 0
 FAIL = 0
 SKIP = 0
@@ -1071,6 +1074,49 @@ finally:
         os.environ.pop("CHEAP_LLM_LOCAL_ONLY", None)
 
 
+# Test deepinfra mapping and cascade inclusion
+check(
+    "deepinfra model mapping: deepseek-v4-pro",
+    cl._normalize_deepinfra_model("deepseek/deepseek-v4-pro") == "deepseek-ai/DeepSeek-V4-Pro"
+)
+check(
+    "deepinfra model mapping: deepseek-v4-flash",
+    cl._normalize_deepinfra_model("deepseek/deepseek-v4-flash") == "deepseek-ai/DeepSeek-V4-Flash"
+)
+check(
+    "deepinfra model mapping: qwen",
+    cl._normalize_deepinfra_model("qwen/qwen3.7-max") == "Qwen/Qwen3.7-Max"
+)
+check(
+    "deepinfra model mapping: unmapped remains identical",
+    cl._normalize_deepinfra_model("some/other-model") == "some/other-model"
+)
+
+try:
+    os.environ["DEEPINFRA_API_KEY"] = "test-key"
+    cascade_di = cl._build_cascade(
+        prefer_local=False, local_model=None, cloud_model="deepseek/deepseek-v4-flash"
+    )
+    providers_di = [c[2] for c in cascade_di]
+    check(
+        "deepinfra added to deepseek cascade when api key set",
+        "deepinfra" in providers_di and providers_di[1] == "deepinfra",
+        detail=f"got {providers_di}"
+    )
+
+    cascade_di_qwen = cl._build_cascade(
+        prefer_local=False, local_model=None, cloud_model="qwen/qwen3.7-max"
+    )
+    providers_di_qwen = [c[2] for c in cascade_di_qwen]
+    check(
+        "deepinfra added to qwen cascade when api key set",
+        "deepinfra" in providers_di_qwen and providers_di_qwen[0] == "deepinfra",
+        detail=f"got {providers_di_qwen}"
+    )
+finally:
+    os.environ.pop("DEEPINFRA_API_KEY", None)
+
+
 # =================================================================
 # UNIT: 1.2.1 regressions — JSON hint without schema + cache shape guard
 # =================================================================
@@ -1313,9 +1359,10 @@ check(
     detail=f"got {_parsed_fences}",
 )
 
-# =================================================================
-# LIVE: real API smoke tests (require API keys)
-# =================================================================
+# Restore DeepInfra API key before live tests
+if _actual_deepinfra_key:
+    os.environ["DEEPINFRA_API_KEY"] = _actual_deepinfra_key
+
 LIVE = "--live" in sys.argv and "--quick" not in sys.argv
 
 print(f"\n=== LIVE: real API smoke (enabled={LIVE}) ===")

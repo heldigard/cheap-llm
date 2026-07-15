@@ -43,7 +43,7 @@ cheap-llm --system "Classify." --prompt "..." --model my-local-model:latest
 | `OLLAMA_URL` | Override the local Ollama endpoint (default `http://localhost:11434`) |
 | `CHEAP_LLM_LOCAL_ONLY` | `1/true/yes/on` → T1 only, never call cloud (privacy mode) |
 | `CHEAP_LLM_LOCAL_COLD_TIMEOUT` | T1 budget in seconds when the model is not loaded in VRAM yet (default 25) |
-| `OPENROUTER_API_KEY` / `ZENMUX_API_KEY` / `DEEPSEEK_API_KEY` | Enable the respective T2 providers |
+| `OPENROUTER_API_KEY` / `ZENMUX_API_KEY` / `DEEPSEEK_API_KEY` / `DEEPINFRA_API_KEY` | Enable the respective T2 providers |
 
 ## Programmatic usage
 
@@ -71,7 +71,11 @@ out = cheap_complete(
 | T2 | gpt-5.4-nano | OpenRouter | $0.20/$1.25 | 12s |
 | T2 | deepseek-v4-flash | OpenRouter (BYOK) | $0 | 12s |
 
-Cross-provider failover: OpenRouter primary, ZenMux backup per model.
+Default cascade: OpenRouter primary, ZenMux backup per benchmarked cheap model.
+Forced judgment models use provider-aware failover: DeepSeek first-party for
+`deepseek/*`, DeepInfra when that model family is available there, then
+OpenRouter and ZenMux. `cheap-llm` distills/classifies signals; it is not an
+architecture authority, coder, or substitute for the controller brain.
 
 ## Output budgets and usage
 

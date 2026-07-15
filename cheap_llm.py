@@ -331,6 +331,7 @@ ZENMUX_URL = "https://zenmux.ai/api/v1"
 # saving OpenRouter obscures. Caveat: DeepSeek retains data for training;
 # scrub_secrets (always applied) keeps it safe for non-secret prep work.
 DEEPSEEK_URL = "https://api.deepseek.com/v1"
+DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 
 
@@ -741,6 +742,43 @@ ZENMUX_ENDPOINT = _Endpoint(
     provider_label="zenmux",
 )
 
+DEEPINFRA_ENDPOINT = _Endpoint(
+    url=DEEPINFRA_URL,
+    key_env="DEEPINFRA_API_KEY",
+    provider_label="deepinfra",
+)
+
+
+def _normalize_deepinfra_model(model: str) -> str:
+    """Map generic/OpenRouter model slugs to DeepInfra-specific slugs."""
+    low = model.lower()
+    if "deepseek-v4-pro" in low or "deepseek-pro" in low:
+        return "deepseek-ai/DeepSeek-V4-Pro"
+    if "deepseek-v4-flash" in low or "deepseek-flash" in low:
+        return "deepseek-ai/DeepSeek-V4-Flash"
+    if "qwen3.7-max" in low:
+        return "Qwen/Qwen3.7-Max"
+    if "glm-5.2" in low:
+        return "zai-org/GLM-5.2"
+    if "mimo-v2.5-pro" in low:
+        return "XiaomiMiMo/MiMo-V2.5-Pro"
+    if "kimi-k2.7-code" in low:
+        return "moonshotai/Kimi-K2.7-Code"
+    return model
+
+
+def _call_deepinfra(
+    model: str,
+    system: str,
+    prompt: str,
+    timeout: float,
+    max_output_tokens: int = 1024,
+) -> dict:
+    resolved_model = _normalize_deepinfra_model(model)
+    return _openai_compat_call(
+        DEEPINFRA_ENDPOINT, resolved_model, system, prompt, timeout, max_output_tokens
+    )
+
 
 def _call_openrouter(
     model: str,
@@ -851,6 +889,8 @@ def _call_provider(
         return _call_zenmux(model, system, prompt, timeout, max_output_tokens)
     elif provider == "deepseek":
         return _call_deepseek(model, system, prompt, timeout, max_output_tokens)
+    elif provider == "deepinfra":
+        return _call_deepinfra(model, system, prompt, timeout, max_output_tokens)
     else:
         raise ValueError(f"unknown provider: {provider}")
 
@@ -961,8 +1001,13 @@ def _build_cascade(
         return cascade
 
     if cloud_model:
+        has_deepinfra = bool(os.environ.get("DEEPINFRA_API_KEY"))
         if cloud_model.startswith("deepseek/"):
             cascade.append(("T2", cloud_model, "deepseek", 18.0))
+            if has_deepinfra:
+                cascade.append(("T2", cloud_model, "deepinfra", 18.0))
+        elif has_deepinfra and any(brand in cloud_model.lower() for brand in ("qwen", "glm", "mimo", "kimi")):
+            cascade.append(("T2", cloud_model, "deepinfra", 18.0))
         cascade.append(("T2", cloud_model, "openrouter", 18.0))
         cascade.append(("T2", cloud_model, "zenmux", 18.0))
         return cascade
@@ -1241,6 +1286,7 @@ def _probe() -> dict:
         "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
         "zenmux_key_set": bool(os.environ.get("ZENMUX_API_KEY")),
         "deepseek_key_set": bool(os.environ.get("DEEPSEEK_API_KEY")),
+        "deepinfra_key_set": bool(os.environ.get("DEEPINFRA_API_KEY")),
         "local_only": os.environ.get("CHEAP_LLM_LOCAL_ONLY", "").strip().lower()
         in ("1", "true", "yes", "on"),
         "cache_entries": len(list(CACHE_DIR.glob("*.json"))) if CACHE_DIR.exists() else 0,
