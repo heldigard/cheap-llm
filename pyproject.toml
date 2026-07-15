@@ -28,7 +28,7 @@ dependencies = []
 test = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-cheap-llm = "cheap_llm:main"
+cheap-llm = "cheap_llm.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -44,9 +44,27 @@ exclude = [
     "tests/test_shim.py",
 ]
 
+[tool.mypy]
+# Mirrors the cli-orchestration quality bar: cheap_llm.py is type-clean
+# (PASSES locally). The behavioral tests use dynamic stubs (Any-shaped return
+# dicts) so they stay outside mypy's strict path. cache.py / probe additions
+# stay tight; ignore_missing_imports is set for any future third-party
+# integration without forcing changes today.
+python_version = "3.11"
+files = ["cheap_llm"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+# contract surface stays tight; internal helpers may stay Any-shaped.
+disallow_untyped_defs = false
+disallow_any_explicit = false
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exports internal symbols for backward compat (tests, shim, consumers)
+"cheap_llm/__init__.py" = ["F401"]

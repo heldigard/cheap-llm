@@ -14,7 +14,6 @@ Run: python3 ~/.claude/scripts/test-cheap-llm.py [--live]
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
 import io
 import json
 import os
@@ -32,11 +31,7 @@ from typing import Any, cast
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-_spec = importlib.util.spec_from_file_location("cheap_llm", PROJECT_ROOT / "cheap_llm.py")
-assert _spec and _spec.loader
-cl: Any = importlib.util.module_from_spec(_spec)
-sys.modules["cheap_llm"] = cl  # needed so @dataclass can resolve cls.__module__
-_spec.loader.exec_module(cl)
+import cheap_llm as cl  # noqa: E402
 
 # Save and clear DeepInfra API key to keep unit/mock test assertions predictable
 _actual_deepinfra_key = os.environ.pop("DEEPINFRA_API_KEY", None)
@@ -1077,19 +1072,19 @@ finally:
 # Test deepinfra mapping and cascade inclusion
 check(
     "deepinfra model mapping: deepseek-v4-pro",
-    cl._normalize_deepinfra_model("deepseek/deepseek-v4-pro") == "deepseek-ai/DeepSeek-V4-Pro"
+    cl._normalize_deepinfra_model("deepseek/deepseek-v4-pro") == "deepseek-ai/DeepSeek-V4-Pro",
 )
 check(
     "deepinfra model mapping: deepseek-v4-flash",
-    cl._normalize_deepinfra_model("deepseek/deepseek-v4-flash") == "deepseek-ai/DeepSeek-V4-Flash"
+    cl._normalize_deepinfra_model("deepseek/deepseek-v4-flash") == "deepseek-ai/DeepSeek-V4-Flash",
 )
 check(
     "deepinfra model mapping: qwen",
-    cl._normalize_deepinfra_model("qwen/qwen3.7-max") == "Qwen/Qwen3.7-Max"
+    cl._normalize_deepinfra_model("qwen/qwen3.7-max") == "Qwen/Qwen3.7-Max",
 )
 check(
     "deepinfra model mapping: unmapped remains identical",
-    cl._normalize_deepinfra_model("some/other-model") == "some/other-model"
+    cl._normalize_deepinfra_model("some/other-model") == "some/other-model",
 )
 
 try:
@@ -1101,7 +1096,7 @@ try:
     check(
         "deepinfra added to deepseek cascade when api key set",
         "deepinfra" in providers_di and providers_di[1] == "deepinfra",
-        detail=f"got {providers_di}"
+        detail=f"got {providers_di}",
     )
 
     cascade_di_qwen = cl._build_cascade(
@@ -1111,7 +1106,7 @@ try:
     check(
         "deepinfra added to qwen cascade when api key set",
         "deepinfra" in providers_di_qwen and providers_di_qwen[0] == "deepinfra",
-        detail=f"got {providers_di_qwen}"
+        detail=f"got {providers_di_qwen}",
     )
 finally:
     os.environ.pop("DEEPINFRA_API_KEY", None)
@@ -1221,10 +1216,11 @@ for _pk in ("zenmux_key_set", "deepseek_key_set", "local_only", "cache_entries")
 # =================================================================
 print("\n=== CLI: --probe standalone ===")
 _probe_proc = subprocess.run(
-    [sys.executable, str(PROJECT_ROOT / "cheap_llm.py"), "--probe"],
+    [sys.executable, "-m", "cheap_llm", "--probe"],
     capture_output=True,
     text=True,
     timeout=15,
+    cwd=PROJECT_ROOT,
 )
 check(
     "--probe runs without --system/--prompt",
@@ -1241,10 +1237,11 @@ except json.JSONDecodeError:
         detail=f"stdout={_probe_proc.stdout[:120]}",
     )
 _noargs_proc = subprocess.run(
-    [sys.executable, str(PROJECT_ROOT / "cheap_llm.py")],
+    [sys.executable, "-m", "cheap_llm"],
     capture_output=True,
     text=True,
     timeout=15,
+    cwd=PROJECT_ROOT,
 )
 check(
     "no args still errors (required pair enforced)",
@@ -1254,7 +1251,8 @@ check(
 _bad_budget_proc = subprocess.run(
     [
         sys.executable,
-        str(PROJECT_ROOT / "cheap_llm.py"),
+        "-m",
+        "cheap_llm",
         "--system",
         "s",
         "--prompt",
@@ -1265,6 +1263,7 @@ _bad_budget_proc = subprocess.run(
     capture_output=True,
     text=True,
     timeout=15,
+    cwd=PROJECT_ROOT,
 )
 check(
     "CLI rejects non-positive --max-tokens before provider calls",
@@ -1274,7 +1273,8 @@ check(
 _bad_timeout_proc = subprocess.run(
     [
         sys.executable,
-        str(PROJECT_ROOT / "cheap_llm.py"),
+        "-m",
+        "cheap_llm",
         "--system",
         "s",
         "--prompt",
@@ -1285,6 +1285,7 @@ _bad_timeout_proc = subprocess.run(
     capture_output=True,
     text=True,
     timeout=15,
+    cwd=PROJECT_ROOT,
 )
 check(
     "CLI rejects non-finite --timeout before provider calls",
