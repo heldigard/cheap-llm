@@ -212,7 +212,7 @@ Optional deps: ripgrep (for --search)
 
 
 # --- cheap_llm client (inline to keep benchmark self-contained) ----------
-# Self-contained on purpose — the benchmark measures cheap_llm.py by
+# Self-contained on purpose — the benchmark measures the cheap_llm package by
 # exercising the same wire shape without importing it (otherwise we can't
 # measure the module from inside itself). urllib imports sit below the
 # rationale comment intentionally.
@@ -238,7 +238,9 @@ def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> d
     t0 = time.perf_counter()
     # Benchmark endpoints come from local operator config/static candidates.
     # nosemgrep
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    with (
+        urllib.request.urlopen(req, timeout=timeout) as resp
+    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(resp.read().decode("utf-8"))
     latency = time.perf_counter() - t0
     return {
@@ -281,7 +283,9 @@ def call_openai_compat(
     )
     t0 = time.perf_counter()
     # nosemgrep: base_url is selected from the static PROVIDER_URLS map.
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    with (
+        urllib.request.urlopen(req, timeout=timeout) as resp
+    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
         body = json.loads(resp.read().decode("utf-8"))
     latency = time.perf_counter() - t0
     text = body["choices"][0]["message"]["content"].strip()

@@ -18,7 +18,15 @@ context, never executed code.
 ## Architecture
 
 ```
-cheap_llm.py          core module — cascade, transport, scrub, cache, CLI
+cheap_llm/            package (vertical-slice architecture)
+  __init__.py         re-exports (backward compat for tests + shim + consumers)
+  __main__.py         `python3 -m cheap_llm` entry point
+  contract.py         version, RESULT_KEYS, require() gate, _complete_result
+  scrub.py            SECRET_PATTERNS, scrub_secrets
+  cache.py            CACHE_DIR, _cache_key, _cache_get, _cache_put
+  transport.py        provider registry, endpoints, all _call_* functions
+  cascade.py          _build_cascade, _try_parse_json, _validate, cheap_complete
+  cli.py              _probe, _cache_stats, _cache_clear, main
 cheap_bench.py        benchmark harness (self-contained transport layer)
 tests/
   test_cheap_llm.py       behavioral + mocked suite (offline, no network)
@@ -43,7 +51,7 @@ T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3
   here (env `CHEAP_LLM_HOME`, default `~/cheap-llm`). The 7 consumer scripts
   that do `import cheap_llm` keep resolving untouched.
 - **Console script** (`pip install -e .`): `cheap-llm`.
-- **Direct**: `python3 cheap_llm.py --probe`.
+- **Direct**: `python3 -m cheap_llm --probe`.
 
 ## CLI
 
@@ -127,9 +135,9 @@ pattern).
 
 ## Conventions
 
-- Single-module package (`cheap_llm.py`), not a `src/` layout — the module IS
-  the product, no internal splits needed.
-- **cheap_llm.py stays at project root** (not `src/`) so `sys.path` bootstrap
+- Multi-module package (`cheap_llm/`), vertical-slice architecture — one
+  responsibility per module (contract, scrub, cache, transport, cascade, cli).
+- **`cheap_llm/` stays at project root** (not `src/`) so `sys.path` bootstrap
   in shim + tests is one dir, no nested package resolution.
 - **cheap_bench.py is self-contained** — has its own inline transport layer so
   the benchmark doesn't depend on the module it's benchmarking.

@@ -22,7 +22,6 @@ Run:
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -30,17 +29,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ECOSYSTEM_SCRIPTS = Path.home() / ".claude" / "scripts"
 sys.path.insert(0, str(PROJECT_ROOT))
 
-_spec = importlib.util.spec_from_file_location("cheap_llm", PROJECT_ROOT / "cheap_llm.py")
-assert _spec and _spec.loader
-cl: Any = importlib.util.module_from_spec(_spec)
-sys.modules["cheap_llm"] = cl  # needed so @dataclass can resolve cls.__module__
-_spec.loader.exec_module(cl)
+import cheap_llm as cl  # noqa: E402
 
 PASS = 0
 FAIL = 0

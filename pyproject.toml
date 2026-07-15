@@ -45,7 +45,7 @@ exclude = [
 ]
 
 [tool.mypy]
-# Mirrors the cli-orchestration quality bar: cheap_llm.py is type-clean
+# Mirrors the cli-orchestration quality bar: cheap_llm package is type-clean
 # (PASSES locally). The behavioral tests use dynamic stubs (Any-shaped return
 # dicts) so they stay outside mypy's strict path. cache.py / probe additions
 # stay tight; ignore_missing_imports is set for any future third-party

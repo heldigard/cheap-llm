@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for cheap_llm.py — cascade, scrubbing, caching, failover.
+"""Regression tests for cheap_llm package — cascade, scrubbing, caching, failover.
 
 Three layers:
   UNIT (no network):     _try_parse_json, _validate, scrub_secrets, _cache_key
@@ -1212,7 +1212,7 @@ for _pk in ("zenmux_key_set", "deepseek_key_set", "local_only", "cache_entries")
 
 # =================================================================
 # CLI: --probe works standalone (regression 2026-07-02: --system/--prompt
-# were required=True, so the documented `cheap_llm.py --probe` exited 2)
+# were required=True, so the documented `python3 -m cheap_llm --probe` exited 2)
 # =================================================================
 print("\n=== CLI: --probe standalone ===")
 _probe_proc = subprocess.run(
