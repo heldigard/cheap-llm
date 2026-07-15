@@ -26,6 +26,7 @@ def _probe_url(url: str, timeout: float = 2.0) -> dict:
     t0 = time.perf_counter()
     try:
         req = urllib.request.Request(url, method="HEAD")
+        # nosemgrep — url comes from _PROVIDERS registry (frozen constants)
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return {
                 "reachable": True,
@@ -58,6 +59,7 @@ def _probe() -> dict:
     }
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", method="GET")
+        # nosemgrep — OLLAMA_URL is operator config, not user input
         with urllib.request.urlopen(req, timeout=2) as r:
             data = _read_json_response(r)
         out["ollama_alive"] = True

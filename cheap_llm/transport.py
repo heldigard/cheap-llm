@@ -134,6 +134,7 @@ def _ollama_model_loaded(model: str) -> bool:
     norm_target = _normalize_model_name(model)
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/ps", method="GET")
+        # nosemgrep — OLLAMA_URL is operator config, not user input
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             data = _read_json_response(resp)
     except Exception:
@@ -156,7 +157,11 @@ def _ollama_model_loaded(model: str) -> bool:
 
 @dataclass(frozen=True)
 class _Endpoint:
-    """OpenAI-compatible chat-completions endpoint config."""
+    """OpenAI-compatible chat-completions endpoint config.
+
+    Bundles url + key_env + provider_label + headers so the call-site helper
+    only sees one endpoint token instead of 4-5 positional params.
+    """
 
     url: str
     key_env: str
@@ -245,13 +250,19 @@ DEEPINFRA_ENDPOINT = _provider_spec("deepinfra").endpoint
 
 
 def _resolve_cost(model: str, usage: dict, provider: str = "openrouter") -> float | None:
-    """Reported API cost if present, else estimate from the listing price."""
+    """Reported API cost if present, else estimate from the listing price.
+
+    ZenMux returns usage.cost=None and OpenRouter returns $0 for some promo
+    models; without an estimate those calls show $0 in telemetry, which hides
+    real spend (ZenMux is 4-10x OpenRouter for the same model). Returns None
+    only when we have neither a reported cost nor a known price.
+    """
     reported = usage.get("cost")
     if reported is not None and reported > 0 and provider != "zenmux":
         return reported
     price = MODEL_PRICING.get(model)
     if not price:
-        return reported
+        return reported  # may be None/0 — caller treats falsy as 0.0
     in_tok = usage.get("prompt_tokens", 0) or 0
     out_tok = usage.get("completion_tokens", 0) or 0
     in_per_m, out_per_m = price
@@ -303,6 +314,9 @@ def _call_ollama(
     timeout: float,
     max_output_tokens: int = 1024,
 ) -> dict:
+    # Smaller ctx for short tasks (faster on 16GB VRAM, where memory bandwidth
+    # is the bottleneck — 9B at q8 leaves little room for big KV cache).
+    # Heuristic: under 4K total input chars → 2048 ctx; else 8192 or 32768 for large tasks.
     total = len(system) + len(prompt)
     if total < 4000:
         num_ctx = 2048
@@ -310,6 +324,16 @@ def _call_ollama(
         num_ctx = 8192
     else:
         num_ctx = 32768
+    # num_ctx must hold the prompt AND the generated tokens. The char-based
+    # bracket above sizes for VRAM but ignores max_output_tokens, so a
+    # near-bracket-edge input + a large output budget silently truncates
+    # generation (Ollama caps num_predict at the remaining context). Floor on
+    # an input-token estimate + the requested output + slack. The //3 divisor
+    # is dense-conservative (code/JSON/logs run ~3 chars/token, not 4) so the
+    # floor is not under-sized on the very content this layer distills. The
+    # floor is capped at the largest bracket (32768) so a pathological very
+    # large input cannot push num_ctx past the pre-existing ceiling into OOM
+    # territory on a 16GB-VRAM 9B model — such inputs truncated before too.
     est_input_tokens = total // 3
     needed = est_input_tokens + max_output_tokens + 256
     num_ctx = max(num_ctx, min(needed, 32768))
@@ -331,6 +355,7 @@ def _call_ollama(
         headers={"Content-Type": "application/json"},
     )
     t0 = time.perf_counter()
+    # nosemgrep — OLLAMA_URL is operator config, not user input
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = _read_json_response(r)
     latency = time.perf_counter() - t0
@@ -351,7 +376,14 @@ def _openai_compat_call(
     timeout: float,
     max_output_tokens: int = 1024,
 ) -> dict:
-    """Shared OpenAI-compatible chat-completions POST."""
+    """Shared OpenAI-compatible chat-completions POST.
+
+    Used by _call_openrouter and _call_zenmux — both are OpenAI-shaped, only
+    URL/key/headers differ. Both providers have been observed returning
+    message.content=None for certain reasoning-style responses, so we coerce
+    None → "" rather than letting .strip() raise AttributeError on a fresh
+    model rollout.
+    """
     api_key = os.environ.get(endpoint.key_env, "")
     if not api_key:
         raise RuntimeError(f"{endpoint.key_env} not set")
@@ -378,6 +410,7 @@ def _openai_compat_call(
         headers=headers,
     )
     t0 = time.perf_counter()
+    # nosemgrep — endpoint.url is a frozen in-module constant
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = _read_json_response(r)
     latency = time.perf_counter() - t0
@@ -436,8 +469,19 @@ def _call_deepseek(
     timeout: float,
     max_output_tokens: int = 1024,
 ) -> dict:
-    """DeepSeek FIRST-PARTY call (api.deepseek.com). OpenAI-compatible with
-    cache-aware pricing (prompt_cache_hit_tokens)."""
+    """DeepSeek FIRST-PARTY call (api.deepseek.com). OpenAI-compatible.
+
+    NOTE 2026-07-02: OpenRouter now lists v4-flash at $0.089/$0.18 (below the
+    first-party $0.14/$0.28 fresh rate), but first-party keeps the 1/10
+    cache-hit discount ($0.014/M cached input) — for repeated-prefix workloads
+    (fixed system prompts, iterative synthesis) first-party still wins overall,
+    so it stays FIRST in the forced-cloud_model order. Cache-aware cost:
+    DeepSeek reports prompt_cache_hit_tokens,
+    so cached prompt input is priced at the discounted rate ($0.029/M for Flash
+    vs $0.14/M fresh) — a saving intermediaries obscure. Slug mapping: our
+    catalog uses the OpenRouter form "deepseek/deepseek-v4-flash"; the direct
+    API wants "deepseek-v4-flash" (strip the "deepseek/" provider prefix).
+    """
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not key:
         raise RuntimeError("DEEPSEEK_API_KEY not set")
@@ -458,6 +502,7 @@ def _call_deepseek(
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
     )
     t0 = time.perf_counter()
+    # nosemgrep — DEEPSEEK_URL is a frozen in-module constant
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = _read_json_response(r)
     latency = time.perf_counter() - t0
