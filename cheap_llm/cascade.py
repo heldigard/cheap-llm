@@ -25,6 +25,7 @@ from .transport import (
     LEGACY_CASCADE,
     LOCAL_COLD_TIMEOUT,
     TOP3_CASCADE,
+    _provider_billing,
     _public_attempt_error,
 )
 
@@ -166,10 +167,14 @@ def _try_cache_hit(
     source_tier = cached.get("tier")
     if not isinstance(source_tier, str) or not source_tier:
         source_tier = tier
+    source_billing = cached.get("billing")
+    if source_billing not in {"local", "payg"}:
+        source_billing = _provider_billing(source_provider)
     attempt = {
         "tier": source_tier,
         "model": model,
         "provider": source_provider,
+        "billing": source_billing,
         "cache_hit": True,
         "latency": 0,
         "cost": 0,
@@ -191,6 +196,7 @@ def _try_cache_hit(
         "text": text,
         "model": model,
         "provider": source_provider,
+        "billing": source_billing,
         "tier": source_tier,
         "latency": 0,
         "cost": 0,
@@ -215,6 +221,7 @@ def _try_live_hit(
     """Build the live success envelope + cache, or return None if validation fails."""
     text = raw["text"]
     cost = raw.get("api_cost") or 0.0
+    billing = raw.get("billing") or _provider_billing(provider)
     parsed = _try_parse_json(text) if require_json else None
     ok = _validate(parsed, schema_t) if require_json else bool(text)
     attempts.append(
@@ -222,6 +229,7 @@ def _try_live_hit(
             "tier": tier,
             "model": model,
             "provider": provider,
+            "billing": billing,
             "latency": round(raw["latency"], 3),
             "cost": cost,
             "json_valid": parsed is not None,
@@ -233,11 +241,15 @@ def _try_live_hit(
     if not ok:
         return None
     source_provider = raw.get("provider") or provider
-    _cache_put(ckey, {"text": text, "provider": source_provider, "tier": tier})
+    _cache_put(
+        ckey,
+        {"text": text, "provider": source_provider, "tier": tier, "billing": billing},
+    )
     return {
         "text": text,
         "model": model,
         "provider": source_provider,
+        "billing": billing,
         "tier": tier,
         "latency": raw["latency"],
         "cost": cost,
@@ -262,7 +274,7 @@ def cheap_complete(
 ) -> dict:
     """Try T1 local, then T2 cloud, return the first good result.
 
-    Returns dict with: text, model, tier, latency, cost, json_valid,
+    Returns dict with: text, model, provider, billing, tier, latency, cost, json_valid,
     fields_ok, attempts, error.
     """
     # Import at call time so test mocks on cheap_llm._call_provider take effect

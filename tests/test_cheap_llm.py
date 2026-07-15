@@ -195,6 +195,25 @@ check(
 )
 check("MODEL_PRICING has gpt-5.4-nano", "openai/gpt-5.4-nano" in cl.MODEL_PRICING)
 
+_old_zenmux_billing = os.environ.get("CHEAP_LLM_ZENMUX_BILLING")
+try:
+    os.environ["CHEAP_LLM_ZENMUX_BILLING"] = "subscription"
+    _zenmux_plan = cl._route_plan(
+        prefer_local=False,
+        cloud_model="inclusionai/ling-2.6-flash",
+        cloud_provider="zenmux",
+    )
+    check(
+        "zenmux stays PAYG when a stale subscription override exists",
+        cl._provider_billing("zenmux") == "payg"
+        and _zenmux_plan["routes"][0]["billing"] == "payg",
+    )
+finally:
+    if _old_zenmux_billing is None:
+        os.environ.pop("CHEAP_LLM_ZENMUX_BILLING", None)
+    else:
+        os.environ["CHEAP_LLM_ZENMUX_BILLING"] = _old_zenmux_billing
+
 # T1 free-text compatibility and structured JSON defaults stay explicit.
 check(
     "T1 local primary is cryptidbleh/gemma4-claude-opus-4.6",
@@ -781,6 +800,7 @@ check(
     "cache hit preserves source provider provenance",
     _provenance_hit is not None
     and _provenance_hit["provider"] == "openrouter"
+    and _provenance_hit["billing"] == "payg"
     and _provenance_attempts[0].get("cache_lookup_provider") == "deepseek",
     detail=f"hit={_provenance_hit} attempts={_provenance_attempts}",
 )
@@ -991,6 +1011,11 @@ check(
     "OpenRouter sorts backing providers by price",
     _openrouter_payload.get("provider") == {"sort": "price"},
 )
+check(
+    "OpenRouter uses the documented application-title header",
+    cl.OPENROUTER_ENDPOINT.extra_headers
+    == {"X-OpenRouter-Title": "cheap-llm-cascade"},
+)
 
 # _Endpoint dataclass exists and is usable
 check("_Endpoint dataclass exists", hasattr(cl, "_Endpoint"))
@@ -1188,6 +1213,10 @@ check(
 check(
     "deepinfra model mapping: unmapped remains identical",
     cl._normalize_deepinfra_model("some/other-model") == "some/other-model",
+)
+check(
+    "deepinfra pricing covers every normalized catalog model",
+    set(cl._PROVIDERS["deepinfra"].slug_map.values()) <= set(cl.DEEPINFRA_PRICING),
 )
 
 try:

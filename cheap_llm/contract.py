@@ -9,12 +9,21 @@ SemVer policy for independent evolution across the ecosystem:
   - PATCH = internal refactor, model/cascade changes, bug fixes
 """
 
+# This module stores the package manifest; implementations are re-exported by
+# cheap_llm.__init__, so the names intentionally do not resolve in this module.
+# pyright: reportUnsupportedDunderAll=false
+
 from __future__ import annotations
 
 import re
 
 __version__ = "1.3.0"
-__all__ = ["cheap_complete", "scrub_secrets", "require", "__version__"]  # noqa: F822
+__all__ = [  # noqa: F822
+    "cheap_complete",
+    "scrub_secrets",
+    "require",
+    "__version__",
+]
 
 # Stable shape of the dict returned by cheap_complete(). Additive-only: a new
 # key is MINOR; removing/renaming is MAJOR.
@@ -22,6 +31,7 @@ RESULT_KEYS: tuple[str, ...] = (
     "text",
     "model",
     "provider",
+    "billing",
     "tier",
     "latency",
     "cost",
@@ -92,6 +102,7 @@ _RESULT_DEFAULTS: dict[str, object] = {
     "text": "",
     "model": None,
     "provider": None,
+    "billing": None,
     "tier": None,
     "latency": 0,
     "cost": 0.0,

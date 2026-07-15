@@ -151,6 +151,7 @@ from .transport import (
     _normalize_model_name,
     _ollama_model_loaded,
     _openai_compat_call,
+    _provider_billing,
     _ProviderSpec,
     _public_attempt_error,
     _read_json_response,

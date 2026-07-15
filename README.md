@@ -67,7 +67,7 @@ out = cheap_complete(
     # cross-provider fallback/cache reuse for T2.
     cloud_provider="deepinfra",
 )
-# out: {text, model, tier, latency, cost, json_valid, fields_ok, attempts, error}
+# out: {text, model, provider, billing, tier, latency, cost, ...}
 ```
 
 ## Cascade

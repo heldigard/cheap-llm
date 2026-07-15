@@ -18,7 +18,13 @@ import urllib.request
 from .cache import CACHE_DIR
 from .cascade import _build_cascade, _resolve_local_model, cheap_complete
 from .contract import __version__
-from .transport import _PROVIDERS, OLLAMA_URL, _public_attempt_error, _read_json_response
+from .transport import (
+    _PROVIDERS,
+    OLLAMA_URL,
+    _provider_billing,
+    _public_attempt_error,
+    _read_json_response,
+)
 
 
 def _probe_url(url: str, timeout: float = 2.0, key_env: str | None = None) -> dict:
@@ -73,7 +79,7 @@ def _route_plan(
                 "model": route_model,
                 "provider": provider,
                 "timeout": timeout,
-                "billing": "local" if provider == "ollama" else "payg",
+                "billing": _provider_billing(provider),
                 "credential_env": key_env,
                 "credential_set": bool(key_env and os.environ.get(key_env)),
             }
@@ -126,13 +132,13 @@ def _probe() -> dict:
                 "latency_ms": None,
                 "status": None,
                 "error": None,
-                "billing": "payg",
+                "billing": _provider_billing(name),
             }
             continue
         out["providers"][name] = _probe_url(
             spec.probe_url, key_env=spec.endpoint.key_env
         )
-        out["providers"][name]["billing"] = "payg"
+        out["providers"][name]["billing"] = _provider_billing(name)
     return out
 
 
