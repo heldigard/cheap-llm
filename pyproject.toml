@@ -72,5 +72,7 @@ select = ["E", "F", "W", "I"]
 # (verbatim bodies); F403/F405 are inherent to that pattern, F401 covers
 # side-effect imports + re-exported stdlib modules in _testlib.
 "tests/_testlib.py" = ["F401", "F403", "F405"]
+"tests/_livetestlib.py" = ["F401", "F403", "F405"]
 "tests/_checks_*.py" = ["F401", "F403", "F405"]
 "tests/test_cheap_llm.py" = ["F401", "I001"]  # import order = section run order, not alphabetical
+"tests/test_cheap_llm_live.py" = ["F401", "I001"]  # ditto
