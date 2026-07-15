@@ -134,7 +134,7 @@ python3 -m pytest -q
 python3 tests/test_cheap_llm_live.py --live
 
 # Benchmark
-python3 cheap_bench.py
+python3 -m cheap_bench
 ```
 
 ## Versioning / Contract (ecosystem decoupling)

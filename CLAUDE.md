@@ -24,10 +24,23 @@ cheap_llm/            package (vertical-slice architecture)
   contract.py         version, RESULT_KEYS, require() gate, _complete_result
   scrub.py            SECRET_PATTERNS, scrub_secrets
   cache.py            CACHE_DIR, _cache_key, _cache_get, _cache_put
-  transport.py        provider registry, endpoints, all _call_* functions
+  transport/          provider registry + call functions (vertical-slice package)
+    constants.py      timeouts, endpoint URLs, local-model defaults
+    pricing.py        pricing tables + _resolve_cost
+    httpio.py         bounded response reads + sanitized public errors
+    providers.py      _Endpoint/_ProviderSpec registry, cascade order, _provider_billing
+    calls.py          _call_* functions, _PROVIDER_DISPATCH, _call_provider
+    __init__.py       facade re-exporting the full transport surface
   cascade.py          _build_cascade, _try_parse_json, _validate, cheap_complete
   cli.py              _probe, _cache_stats, _cache_clear, main
-cheap_bench.py        benchmark harness (self-contained transport layer)
+cheap_bench/          benchmark package (self-contained — no cheap_llm imports)
+  tasks.py            fixed task set (intent/commit/error/json/diff)
+  candidates.py       candidate catalog + public-listing pricing
+  calls.py            inline transport (call_local/openai_compat/call_candidate)
+  scoring.py          try_parse_json, score_response, _content_quality
+  runner.py           run_benchmark
+  report.py           print_leaderboard
+  cli.py              main (argparse + run + report + JSONL append)
 tests/
   test_cheap_llm.py       behavioral + mocked suite (offline, no network)
   test_contract.py        pytest public API/SemVer contract gate
@@ -143,8 +156,10 @@ pattern).
   responsibility per module (contract, scrub, cache, transport, cascade, cli).
 - **`cheap_llm/` stays at project root** (not `src/`) so `sys.path` bootstrap
   in shim + tests is one dir, no nested package resolution.
-- **cheap_bench.py is self-contained** — has its own inline transport layer so
-  the benchmark doesn't depend on the module it's benchmarking.
+- **cheap_bench/ is self-contained** — split into a vertical-slice package but
+  the submodules import only each other + stdlib, never cheap_llm, so the
+  benchmark doesn't depend on the module it's benchmarking. Run via
+  `python3 -m cheap_bench`.
 - **Secret scrub is unconditional** — applied even on the local (Ollama) path
   because T1 frequently times out and the same prompt then reaches cloud.
 - **Callers own output budgets** — `max_output_tokens` defaults to 1024 for
@@ -158,7 +173,7 @@ pattern).
 - Test (offline behavior): `python3 tests/test_cheap_llm.py`
 - Test (contract + shim): `python3 -m pytest -q`
 - Test (live): `python3 tests/test_cheap_llm_live.py --live`
-- Bench: `python3 cheap_bench.py`
+- Bench: `python3 -m cheap_bench`
 - Lint: `ruff check .`
 
 ## Model routing
