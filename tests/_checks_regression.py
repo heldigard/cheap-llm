@@ -117,7 +117,8 @@ finally:
 check(
     "provider probe uses authenticated GET",
     _probe_result["reachable"] is True
-    and _probe_seen == {
+    and _probe_seen
+    == {
         "method": "GET",
         "authorization": "Bearer synthetic-test-value",
     },

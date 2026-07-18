@@ -10,15 +10,53 @@ intentionally.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import time
+import urllib.parse
 import urllib.request
 
 PROVIDER_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "deepinfra": "https://api.deepinfra.com/v1/openai",
 }
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _ollama_generate_url() -> str:
+    raw = os.environ.get("OLLAMA_URL", "http://localhost:11434").strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlparse(raw)
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        return "http://localhost:11434/api/generate"
+    if (
+        parsed.scheme != "http"
+        or not _is_loopback_host(parsed.hostname)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or port == 0
+    ):
+        return "http://localhost:11434/api/generate"
+    assert parsed.hostname is not None  # established by _is_loopback_host above
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    suffix = f":{port}" if port is not None else ""
+    return f"http://{host}{suffix}/api/generate"
 
 
 def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> dict:
@@ -30,17 +68,14 @@ def call_local(model: str, system: str, prompt: str, timeout: float = 30.0) -> d
         "stream": False,
         "options": {"temperature": 0.1, "num_ctx": 8192},
     }
-    url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/") + "/api/generate"
     req = urllib.request.Request(
-        url,
+        _ollama_generate_url(),
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
     t0 = time.perf_counter()
-    # Operator-controlled local endpoint; Request above constrains the shape.
-    with (
-        urllib.request.urlopen(req, timeout=timeout) as resp
-    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    # URL is normalized to plain-HTTP loopback by _ollama_generate_url.
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep
         body = json.loads(resp.read().decode("utf-8"))
     latency = time.perf_counter() - t0
     return {
@@ -61,6 +96,9 @@ def call_openai_compat(
     extra: dict | None = None,
 ) -> dict:
     """Call any OpenAI-compatible chat-completions endpoint."""
+    normalized_base = base_url.rstrip("/")
+    if normalized_base not in PROVIDER_URLS.values():
+        raise ValueError("unsupported benchmark provider endpoint")
     payload = {
         "model": model,
         "messages": [
@@ -74,7 +112,7 @@ def call_openai_compat(
     if extra:
         payload.update(extra)
     req = urllib.request.Request(
-        f"{base_url.rstrip('/')}/chat/completions",
+        f"{normalized_base}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -82,10 +120,8 @@ def call_openai_compat(
         },
     )
     t0 = time.perf_counter()
-    # base_url is selected from the static PROVIDER_URLS map.
-    with (
-        urllib.request.urlopen(req, timeout=timeout) as resp
-    ):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+    # normalized_base is selected from the static HTTPS PROVIDER_URLS allowlist.
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep
         body = json.loads(resp.read().decode("utf-8"))
     latency = time.perf_counter() - t0
     text = body["choices"][0]["message"]["content"].strip()

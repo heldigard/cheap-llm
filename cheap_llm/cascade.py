@@ -71,8 +71,8 @@ def _build_cascade(
         cascade.append(("T2", cloud_model, cloud_provider, 18.0))
         return cascade
 
+    has_deepinfra = bool(os.environ.get("DEEPINFRA_API_KEY"))
     if cloud_model:
-        has_deepinfra = bool(os.environ.get("DEEPINFRA_API_KEY"))
         if cloud_model.startswith("deepseek/"):
             cascade.append(("T2", cloud_model, "deepseek", 18.0))
             if has_deepinfra:
@@ -84,10 +84,21 @@ def _build_cascade(
         cascade.append(("T2", cloud_model, "openrouter", 18.0))
         cascade.append(("T2", cloud_model, "zenmux", 18.0))
         return cascade
+    has_deepseek = bool(os.environ.get("DEEPSEEK_API_KEY"))
+    if has_deepseek:
+        # 2026-07-17: first-party api.deepseek.com beats resellers — no
+        # OpenRouter markup and a much deeper prompt-cache discount. Same
+        # credential-gating rule as deepinfra below: never advertise a route
+        # that cannot authenticate in the automatic cascade.
+        cascade.append(("T2", "deepseek/deepseek-v4-flash", "deepseek", 12.0))
     for m, p in TOP3_CASCADE:
         cascade.append(("T2", m, p, 12.0))
     for m, p in LEGACY_CASCADE:
         cascade.append(("T2", m, p, 12.0))
+    if has_deepinfra:
+        # Optional distinct billing pool. Do not advertise or attempt a route
+        # that cannot authenticate in the automatic cascade.
+        cascade.append(("T2", "deepseek/deepseek-v4-flash", "deepinfra", 12.0))
     return cascade
 
 

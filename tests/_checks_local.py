@@ -127,9 +127,7 @@ _urlreq.urlopen = _fake_urlopen_factory(
 )
 try:
     os.environ["DEEPINFRA_API_KEY"] = "test-key"
-    _di = cl._call_deepinfra(
-        "deepseek/deepseek-v4-flash", "s", "p", timeout=5, require_json=True
-    )
+    _di = cl._call_deepinfra("deepseek/deepseek-v4-flash", "s", "p", timeout=5, require_json=True)
 finally:
     _urlreq.urlopen = _orig_urlopen
     os.environ.pop("DEEPINFRA_API_KEY", None)

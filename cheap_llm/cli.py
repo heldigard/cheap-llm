@@ -135,9 +135,7 @@ def _probe() -> dict:
                 "billing": _provider_billing(name),
             }
             continue
-        out["providers"][name] = _probe_url(
-            spec.probe_url, key_env=spec.endpoint.key_env
-        )
+        out["providers"][name] = _probe_url(spec.probe_url, key_env=spec.endpoint.key_env)
         out["providers"][name]["billing"] = _provider_billing(name)
     return out
 

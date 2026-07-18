@@ -42,6 +42,7 @@ finally:
     del os.environ["OPENROUTER_API_KEY"]
 
 _urlreq.urlopen = _fake_urlopen_factory(_body_with_think)
+_old_deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
 try:
     os.environ["DEEPSEEK_API_KEY"] = "test"
     _ds_resp = cl._call_deepseek(
@@ -54,7 +55,10 @@ try:
     )
 finally:
     _urlreq.urlopen = _orig_urlopen_struct
-    del os.environ["DEEPSEEK_API_KEY"]
+    if _old_deepseek_key is None:
+        os.environ.pop("DEEPSEEK_API_KEY", None)
+    else:
+        os.environ["DEEPSEEK_API_KEY"] = _old_deepseek_key
 
 _json_internal_fences = '```json\n{"code": "```python\\nprint(1)\\n```"}\n```'
 _parsed_fences = cl._try_parse_json(_json_internal_fences)
@@ -63,4 +67,3 @@ check(
     _parsed_fences == {"code": "```python\nprint(1)\n```"},
     detail=f"got {_parsed_fences}",
 )
-

@@ -94,8 +94,7 @@ check(
 )
 check(
     "OpenRouter uses the documented application-title header",
-    cl.OPENROUTER_ENDPOINT.extra_headers
-    == {"X-OpenRouter-Title": "cheap-llm-cascade"},
+    cl.OPENROUTER_ENDPOINT.extra_headers == {"X-OpenRouter-Title": "cheap-llm-cascade"},
 )
 
 # _Endpoint dataclass exists and is usable
@@ -117,17 +116,69 @@ except (AttributeError, dataclasses.FrozenInstanceError):
 
 # _build_cascade returns the right shape: T1 first (default), T2 cloud pairs
 # second, legacy last
-cascade_default = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
+_environment_deepinfra_key = os.environ.pop("DEEPINFRA_API_KEY", None)
+try:
+    cascade_default = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
+finally:
+    if _environment_deepinfra_key is not None:
+        os.environ["DEEPINFRA_API_KEY"] = _environment_deepinfra_key
 check("cascade default: starts with T1 ollama", cascade_default[0][0] == "T1")
 check(
-    "cascade default: ends with LEGACY (gpt-5.4-nano or deepseek-v4-flash)",
-    cascade_default[-1][1] in ("openai/gpt-5.4-nano", "deepseek/deepseek-v4-flash"),
+    "cascade default: ends with legacy ling failover",
+    cascade_default[-1][1:] == ("inclusionai/ling-2.6-flash", "zenmux", 12.0),
     detail=f"last={cascade_default[-1]}",
 )
 check(
-    "cascade default: 9 entries (T1 + 6 TOP3 + 2 LEGACY)",
-    len(cascade_default) == 9,
+    "cascade default: 10 entries (T1 + 6 TOP3 + 3 LEGACY)",
+    len(cascade_default) == 10,
     detail=f"got {len(cascade_default)}",
+)
+check(
+    "cascade default omits unavailable deepinfra fallback",
+    all(route[2] != "deepinfra" for route in cascade_default),
+)
+
+_old_deepinfra_key = os.environ.get("DEEPINFRA_API_KEY")
+try:
+    os.environ["DEEPINFRA_API_KEY"] = "test-key"
+    cascade_with_deepinfra = cl._build_cascade(
+        prefer_local=False, local_model=None, cloud_model=None
+    )
+finally:
+    if _old_deepinfra_key is None:
+        os.environ.pop("DEEPINFRA_API_KEY", None)
+    else:
+        os.environ["DEEPINFRA_API_KEY"] = _old_deepinfra_key
+check(
+    "automatic cascade adds deepinfra only when configured",
+    cascade_with_deepinfra[-1] == ("T2", "deepseek/deepseek-v4-flash", "deepinfra", 12.0),
+)
+
+# 2026-07-17: first-party deepseek leg leads the automatic T2 order when the
+# credential exists, and stays out when it does not (no unauthenticated route).
+_old_deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+try:
+    os.environ["DEEPSEEK_API_KEY"] = "test-key"
+    cascade_with_deepseek = cl._build_cascade(
+        prefer_local=False, local_model=None, cloud_model=None
+    )
+    os.environ.pop("DEEPSEEK_API_KEY", None)
+    cascade_without_deepseek = cl._build_cascade(
+        prefer_local=False, local_model=None, cloud_model=None
+    )
+finally:
+    if _old_deepseek_key is None:
+        os.environ.pop("DEEPSEEK_API_KEY", None)
+    else:
+        os.environ["DEEPSEEK_API_KEY"] = _old_deepseek_key
+check(
+    "automatic cascade leads with first-party deepseek when configured",
+    cascade_with_deepseek[0] == ("T2", "deepseek/deepseek-v4-flash", "deepseek", 12.0),
+    detail=f"first={cascade_with_deepseek[0]}",
+)
+check(
+    "automatic cascade omits first-party deepseek without credential",
+    all(route[2] != "deepseek" for route in cascade_without_deepseek),
 )
 
 # forced cloud_model (non-deepseek) → just OR + ZenMux

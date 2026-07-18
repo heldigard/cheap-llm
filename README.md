@@ -1,7 +1,7 @@
 # cheap-llm
 
 Unified cheap-LLM cascade client for preprocessor slots. T1 local (Ollama) →
-T2 cloud (ling/gemini/gpt-nano) with cross-provider failover, secret scrub,
+T2 cloud (DeepSeek/Gemini/Ling/GPT Nano) with cross-provider failover, secret scrub,
 and JSON contract.
 
 ## Install
@@ -75,13 +75,16 @@ out = cheap_complete(
 | Tier | Model | Provider | Cost (per M tokens) | Timeout |
 |------|-------|----------|---------------------|---------|
 | T1 | cryptidbleh/gemma4-claude-opus-4.6 (text) / SetneufPT/Qwopus3.5-4B-Coder-MTP (JSON/schema) | Ollama (local) | $0 | 6s |
-| T2 | ling-2.6-flash | OpenRouter → ZenMux | $0.01/$0.03 | 12s |
-| T2 | ling-2.6-1t | OpenRouter → ZenMux | $0.075/$0.625 | 12s |
+| T2 | deepseek-v4-flash | OpenRouter → ZenMux | $0.098/$0.196 | 12s |
 | T2 | gemini-3.1-flash-lite | OpenRouter → ZenMux | $0.25/$1.50 | 12s |
+| T2 | ling-2.6-1t | OpenRouter → ZenMux | $0.075/$0.625 | 12s |
 | T2 | gpt-5.4-nano | OpenRouter | $0.20/$1.25 | 12s |
-| T2 | deepseek-v4-flash | OpenRouter | $0.098/$0.196 | 12s |
+| T2 | ling-2.6-flash | OpenRouter → ZenMux | $0.01/$0.03 | 12s |
+| T2 (optional) | deepseek-v4-flash | DeepInfra | $0.09/$0.18 | 12s |
 
 Default cascade: OpenRouter primary, ZenMux backup per benchmarked cheap model.
+The final DeepInfra route is included only when `DEEPINFRA_API_KEY` is present,
+so route plans never advertise an unauthenticated attempt.
 Forced judgment models use provider-aware failover: DeepSeek first-party for
 `deepseek/*`, DeepInfra when that model family is available there, then
 OpenRouter and ZenMux. `cheap-llm` distills/classifies signals; it is not an

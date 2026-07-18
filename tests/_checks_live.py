@@ -37,5 +37,3 @@ else:
                 out.get("model") is not None,
                 detail=f"text={out.get('text', '')[:80]}",
             )
-
-

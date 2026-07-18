@@ -33,8 +33,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import cheap_llm as cl  # noqa: E402
 
-# Save and clear DeepInfra API key to keep unit/mock test assertions predictable
+# Save and clear optional provider keys so unit/mock route assertions are
+# hermetic and synthetic requests can never inherit a live credential.
 _actual_deepinfra_key = os.environ.pop("DEEPINFRA_API_KEY", None)
+_actual_deepseek_key = os.environ.pop("DEEPSEEK_API_KEY", None)
 
 PASS = 0
 FAIL = 0
@@ -63,9 +65,12 @@ def synthetic_secret(*parts: str) -> str:
     """Build detector-shaped fixtures without storing complete secrets in source."""
     return "".join(parts)
 
+
 # --- shared cross-section fixtures (moved here so every _checks_* sees them) ---
 # Saved once at import: sections that monkeypatch _urlreq.urlopen restore this.
 _orig_urlopen = _urlreq.urlopen
+
+
 class _FakeResp(io.BytesIO):
     def __enter__(self):
         return self
@@ -82,8 +87,10 @@ def _fake_urlopen_factory(body: dict, seen_payload: dict | None = None):
 
     return _fake
 
+
 # cache dir reused by cascade / regression / live sections
 cache_dir = Path.home() / ".claude" / "state" / "cheap-llm-cache"
+
 
 # Cross-section cascade helpers (defined in the cascade section, used in regression).
 def _restore_call_provider():
@@ -103,9 +110,10 @@ def _ok(text: str, cost: float = 0.000001, latency: float = 1.0, provider: str =
         "provider": provider,
     }
 
+
 # Live-smoke gate (parsed once at import).
 LIVE = "--live" in sys.argv and "--quick" not in sys.argv
 
-# Star-import surface: export EVERYTHING (incl. _FakeResp / _urlreq / _actual_deepinfra_key)
-# so section bodies stay verbatim under `from _testlib import *`.
+# Star-import surface: export EVERYTHING so section bodies stay verbatim under
+# `from _testlib import *`.
 __all__ = [n for n in dir() if not n.startswith("__")]

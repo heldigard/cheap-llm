@@ -3,8 +3,6 @@ from _testlib import *  # noqa: E402,F401,F403  -- harness + shared fixtures
 print("\n=== UNIT: deepseek cache-aware cost ===")
 
 
-
-
 _ds_body = {
     "choices": [{"message": {"content": "ok"}}],
     "usage": {
@@ -16,8 +14,9 @@ _ds_body = {
 _orig_urlopen = _urlreq.urlopen
 _ds_payload: dict = {}
 _urlreq.urlopen = _fake_urlopen_factory(_ds_body, _ds_payload)
+_old_deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
 try:
-    os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
+    os.environ["DEEPSEEK_API_KEY"] = "test-key"
     _ds = cl._call_deepseek(
         "deepseek/deepseek-v4-flash",
         "s",
@@ -28,6 +27,10 @@ try:
     )
 finally:
     _urlreq.urlopen = _orig_urlopen
+    if _old_deepseek_key is None:
+        os.environ.pop("DEEPSEEK_API_KEY", None)
+    else:
+        os.environ["DEEPSEEK_API_KEY"] = _old_deepseek_key
 # fresh 400K @ $0.14/M + cached 600K @ $0.0028/M + out 100K @ $0.28/M
 _expected = (400_000 * 0.14 + 600_000 * 0.0028 + 100_000 * 0.28) / 1_000_000
 check(

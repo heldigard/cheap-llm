@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _testlib  # noqa: E402  -- sets up state, check/skip, cl, shared fixtures
 
 # Import each group in original section order; top-level checks run on import.
-# DEEPINFRA_API_KEY stays POPPED (by _testlib) through all unit/mocked sections so
-# cascade assertions are predictable; restore it only before the live section.
+# Optional provider keys stay popped through unit/mocked sections so cascade
+# assertions remain hermetic; restore them only before the live section.
 import _checks_pure  # noqa: E402,F401
 import _checks_cost  # noqa: E402,F401
 import _checks_scrub  # noqa: E402,F401
@@ -33,9 +33,11 @@ import _checks_regression  # noqa: E402,F401
 import _checks_cli  # noqa: E402,F401
 import _checks_robustness  # noqa: E402,F401
 
-# Restore DeepInfra API key before the (optional) live section.
-if _testlib._actual_deepinfra_key:
+# Restore live credentials exactly as inherited before the optional live section.
+if _testlib._actual_deepinfra_key is not None:
     os.environ["DEEPINFRA_API_KEY"] = _testlib._actual_deepinfra_key
+if _testlib._actual_deepseek_key is not None:
+    os.environ["DEEPSEEK_API_KEY"] = _testlib._actual_deepseek_key
 
 import _checks_live  # noqa: E402,F401
 

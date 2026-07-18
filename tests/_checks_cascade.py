@@ -52,7 +52,7 @@ shutil.rmtree(cache_dir, ignore_errors=True)
 
 log, _restore_unused = _stub_cascade(
     {
-        ("inclusionai/ling-2.6-flash", "openrouter"): [_ok('{"category": "debug"}')],
+        ("deepseek/deepseek-v4-flash", "openrouter"): [_ok('{"category": "debug"}')],
     }
 )
 seen_budgets: list[int] = []
@@ -79,8 +79,8 @@ check(
     detail=f"got {len(out['attempts'])} attempts",
 )
 check(
-    "first tier returns ling-2.6-flash@openrouter",
-    out["model"] == "inclusionai/ling-2.6-flash" and out["provider"] == "openrouter",
+    "first tier returns deepseek-v4-flash@openrouter",
+    out["model"] == "deepseek/deepseek-v4-flash" and out["provider"] == "openrouter",
 )
 check("output budget reaches provider", seen_budgets == [256], detail=f"got {seen_budgets}")
 check(
@@ -92,11 +92,11 @@ check(
 _restore_call_provider()
 
 
-# M2: OpenRouter down on ling-2.6-flash, ZenMux catches
+# M2: OpenRouter down on deepseek-v4-flash, ZenMux catches
 def _m2_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
-    if model == "inclusionai/ling-2.6-flash" and provider == "openrouter":
+    if model == "deepseek/deepseek-v4-flash" and provider == "openrouter":
         raise urllib.error.HTTPError("https://x", 503, "Service Unavailable", cast(Any, {}), None)
-    if model == "inclusionai/ling-2.6-flash" and provider == "zenmux":
+    if model == "deepseek/deepseek-v4-flash" and provider == "zenmux":
         return _ok('{"category": "debug"}', provider=provider)
     return _ok('{"category": "should not reach"}', provider=provider)
 
@@ -107,8 +107,8 @@ out = cl.cheap_complete(
     system="Classify.", prompt="x", schema_hint=["category"], timeout_total=15, prefer_local=False
 )
 check(
-    "OR 503 → ZenMux catches ling-2.6-flash",
-    out["model"] == "inclusionai/ling-2.6-flash" and out["provider"] == "zenmux",
+    "OR 503 → ZenMux catches deepseek-v4-flash",
+    out["model"] == "deepseek/deepseek-v4-flash" and out["provider"] == "zenmux",
     detail=f"got model={out['model']} provider={out['provider']}",
 )
 check(
@@ -119,10 +119,10 @@ check(
 _restore_call_provider()
 
 
-# M3: Both ling models fail on both providers → gemini catches
+# M3: DeepSeek fails on both providers → Gemini catches
 def _m3_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
-    if "ling" in model:
-        raise RuntimeError("ling model unavailable")
+    if model == "deepseek/deepseek-v4-flash":
+        raise RuntimeError("deepseek model unavailable")
     if model == "google/gemini-3.1-flash-lite" and provider == "openrouter":
         return _ok('{"category": "debug"}')
     return _ok('{"category": "should not reach"}')
@@ -134,7 +134,7 @@ out = cl.cheap_complete(
     system="Classify.", prompt="x", schema_hint=["category"], timeout_total=15, prefer_local=False
 )
 check(
-    "all ling fail → gemini catches",
+    "deepseek fails → gemini catches",
     out["model"] == "google/gemini-3.1-flash-lite",
     detail=f"got {out['model']}",
 )
@@ -158,8 +158,8 @@ check(
     detail=f"error={out.get('error')}",
 )
 check(
-    "all fail → 8 attempts logged",
-    len(out["attempts"]) == 8,
+    "all fail → every configured route is logged",
+    len(out["attempts"]) == len(cl._build_cascade(False, None, None)),
     detail=f"got {len(out['attempts'])} attempts",
 )
 _restore_call_provider()
@@ -315,9 +315,9 @@ for _bad_timeout in (0, -1, True, float("nan"), float("inf"), -float("inf")):
 
 # M6: Invalid JSON triggers cascade fallthrough
 def _m6_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
-    if model == "inclusionai/ling-2.6-flash":
+    if model == "deepseek/deepseek-v4-flash":
         return _ok("not valid json at all")  # fails JSON contract
-    if model == "inclusionai/ling-2.6-1t":
+    if model == "google/gemini-3.1-flash-lite":
         return _ok('{"category": "debug"}')
     return _ok('{"category": "should not reach"}')
 
@@ -328,8 +328,8 @@ out = cl.cheap_complete(
     system="C.", prompt="x", schema_hint=["category"], timeout_total=15, prefer_local=False
 )
 check(
-    "invalid JSON → fallthrough to ling-2.6-1t",
-    out["model"] == "inclusionai/ling-2.6-1t",
+    "invalid JSON → fallthrough to gemini",
+    out["model"] == "google/gemini-3.1-flash-lite",
     detail=f"got {out['model']}",
 )
 _restore_call_provider()
@@ -337,7 +337,7 @@ _restore_call_provider()
 
 # M7: require_json=False (text mode) accepts non-JSON
 def _m7_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):
-    if model == "inclusionai/ling-2.6-flash":
+    if model == "deepseek/deepseek-v4-flash":
         return _ok("plain text response, no JSON")
     return _ok("not reached")
 

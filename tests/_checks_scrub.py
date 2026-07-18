@@ -110,9 +110,7 @@ rep = cl._resolve_cost(
     "inclusionai/ling-2.6-flash", {"prompt_tokens": 10, "completion_tokens": 10, "cost": 0.000123}
 )
 check("reported cost (>0) returned as-is", abs(rep - 0.000123) < 1e-12, detail=f"rep={rep}")
-di_rep = cl._resolve_cost(
-    "provider/new-model", {"estimated_cost": 0.000321}, provider="deepinfra"
-)
+di_rep = cl._resolve_cost("provider/new-model", {"estimated_cost": 0.000321}, provider="deepinfra")
 check(
     "deepinfra estimated_cost returned as-is",
     di_rep is not None and abs(di_rep - 0.000321) < 1e-12,

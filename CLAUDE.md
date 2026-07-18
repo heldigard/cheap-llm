@@ -53,9 +53,12 @@ tests/
 ```
 T1 LOCAL  (free, private)    6s  — cryptidbleh/gemma4-claude-opus-4.6 text /
                                     SetneufPT/Qwopus structured JSON (Ollama)
-T2 CHEAP CLOUD              12s  — ling-2.6-flash → ling-2.6-1t → gemini-3.1-flash-lite
+T2 CHEAP CLOUD              12s  — first-party deepseek-v4-flash when DEEPSEEK_API_KEY
+                                    is set (no reseller markup, deeper cache discount),
+                                    then deepseek-v4-flash → gemini-3.1-flash-lite → ling-2.6-1t
                                     (OpenRouter primary, ZenMux failover)
-    LEGACY safety net             — gpt-5.4-nano, deepseek-v4-flash (PAYG)
+    LEGACY safety net             — gpt-5.4-nano, ling-2.6-flash; optional
+                                    DeepInfra deepseek-v4-flash when configured
 ```
 
 ## Entry points

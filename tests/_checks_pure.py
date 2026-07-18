@@ -1,5 +1,7 @@
 from _testlib import *  # noqa: E402,F401,F403  -- harness + shared fixtures
 
+from cheap_bench import calls as bench_calls
+
 print("\n=== UNIT: pure functions ===")
 
 # _try_parse_json
@@ -85,17 +87,17 @@ check("JSON hint mentions first char", "`{`" in cl.JSON_HINT)
 # TOP3_CASCADE structure
 check("TOP3_CASCADE has 6 entries (3 models × 2 providers)", len(cl.TOP3_CASCADE) == 6)
 check(
-    "first entry is ling-2.6-flash@openrouter",
-    cl.TOP3_CASCADE[0] == ("inclusionai/ling-2.6-flash", "openrouter"),
+    "first entry is deepseek-v4-flash@openrouter",
+    cl.TOP3_CASCADE[0] == ("deepseek/deepseek-v4-flash", "openrouter"),
 )
 check(
-    "ling-2.6-flash has zenmux failover",
-    ("inclusionai/ling-2.6-flash", "zenmux") in cl.TOP3_CASCADE,
+    "deepseek-v4-flash has zenmux failover",
+    ("deepseek/deepseek-v4-flash", "zenmux") in cl.TOP3_CASCADE,
 )
 check(
-    "ling-2.6-1t comes before gemini",
-    [m for m, _ in cl.TOP3_CASCADE].index("inclusionai/ling-2.6-1t")
-    < [m for m, _ in cl.TOP3_CASCADE].index("google/gemini-3.1-flash-lite"),
+    "gemini comes before ling-2.6-1t",
+    [m for m, _ in cl.TOP3_CASCADE].index("google/gemini-3.1-flash-lite")
+    < [m for m, _ in cl.TOP3_CASCADE].index("inclusionai/ling-2.6-1t"),
 )
 
 # LEGACY_CASCADE: kimi-k2 replaced by gpt-5.4-nano; dead constants gone
@@ -109,8 +111,9 @@ check(
     "moonshotai/kimi-k2" not in [m for m, _ in cl.TOP3_CASCADE + cl.LEGACY_CASCADE],
 )
 check(
-    "deepseek-v4-flash still in LEGACY PAYG fallback",
-    ("deepseek/deepseek-v4-flash", "openrouter") in cl.LEGACY_CASCADE,
+    "legacy cascade retains ling-2.6-flash provider failover",
+    ("inclusionai/ling-2.6-flash", "openrouter") in cl.LEGACY_CASCADE
+    and ("inclusionai/ling-2.6-flash", "zenmux") in cl.LEGACY_CASCADE,
 )
 check(
     "no dead DEFAULT_CLOUD_* constants remain",
@@ -128,6 +131,46 @@ check(
 )
 check("MODEL_PRICING has gpt-5.4-nano", "openai/gpt-5.4-nano" in cl.MODEL_PRICING)
 
+# Benchmark transport keeps dynamic URLs inside explicit trust boundaries.
+_old_ollama_url = os.environ.get("OLLAMA_URL")
+try:
+    os.environ["OLLAMA_URL"] = "file:///etc/passwd"
+    check(
+        "benchmark rejects non-HTTP Ollama endpoint",
+        bench_calls._ollama_generate_url() == "http://localhost:11434/api/generate",
+    )
+    os.environ["OLLAMA_URL"] = "http://127.0.0.1:11500"
+    check(
+        "benchmark accepts loopback Ollama endpoint",
+        bench_calls._ollama_generate_url() == "http://127.0.0.1:11500/api/generate",
+    )
+    os.environ["OLLAMA_URL"] = "http://127.0.0.2:11500"
+    check(
+        "benchmark accepts full IPv4 loopback range",
+        bench_calls._ollama_generate_url() == "http://127.0.0.2:11500/api/generate",
+    )
+    os.environ["OLLAMA_URL"] = "http://[::1]:11500"
+    check(
+        "benchmark accepts IPv6 loopback",
+        bench_calls._ollama_generate_url() == "http://[::1]:11500/api/generate",
+    )
+    os.environ["OLLAMA_URL"] = "http://192.0.2.1:11500"
+    check(
+        "benchmark rejects remote IP endpoint",
+        bench_calls._ollama_generate_url() == "http://localhost:11434/api/generate",
+    )
+finally:
+    if _old_ollama_url is None:
+        os.environ.pop("OLLAMA_URL", None)
+    else:
+        os.environ["OLLAMA_URL"] = _old_ollama_url
+
+try:
+    bench_calls.call_openai_compat("file:///tmp", "unused", "m", "s", "p")
+    check("benchmark rejects unlisted provider endpoint", False, detail="no ValueError")
+except ValueError:
+    check("benchmark rejects unlisted provider endpoint", True)
+
 _old_zenmux_billing = os.environ.get("CHEAP_LLM_ZENMUX_BILLING")
 try:
     os.environ["CHEAP_LLM_ZENMUX_BILLING"] = "subscription"
@@ -138,8 +181,7 @@ try:
     )
     check(
         "zenmux stays PAYG when a stale subscription override exists",
-        cl._provider_billing("zenmux") == "payg"
-        and _zenmux_plan["routes"][0]["billing"] == "payg",
+        cl._provider_billing("zenmux") == "payg" and _zenmux_plan["routes"][0]["billing"] == "payg",
     )
 finally:
     if _old_zenmux_billing is None:

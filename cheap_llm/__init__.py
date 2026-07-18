@@ -26,11 +26,12 @@ TOP3_CASCADE + LEGACY_CASCADE (see those constants for the live order):
   T1 LOCAL (free, private)        timeout 6s  — cryptidbleh/gemma4-claude-opus-4.6 for text,
                                                     SetneufPT for JSON/schema
   T2 CHEAP CLOUD                  timeout 12s — TOP3_CASCADE:
-      ling-2.6-flash @ openrouter → zenmux      ($0.01/$0.03 per M)
-      ling-2.6-1t    @ openrouter → zenmux      ($0.075/$0.625 per M)
+      deepseek-v4-flash @ openrouter → zenmux
       gemini-3.1-flash-lite @ openrouter → zenmux ($0.25/$1.50 per M)
+      ling-2.6-1t    @ openrouter → zenmux      ($0.075/$0.625 per M)
     then LEGACY_CASCADE safety net:
-      gpt-5.4-nano, deepseek-v4-flash  @ openrouter  (PAYG)
+      gpt-5.4-nano @ openrouter, ling-2.6-flash @ openrouter → zenmux
+      deepseek-v4-flash @ deepinfra only when its credential is configured
 
 There is NO expensive "T3" fallback — every model above is cheap. If all
 tiers fail or return invalid output, cheap_complete returns an empty error
@@ -65,7 +66,8 @@ Decisions:
   - The current free-text T1 compatibility default is
     cryptidbleh/gemma4-claude-opus-4.6; structured calls use SetneufPT/Qwopus.
     Keep these comments aligned with DEFAULT_LOCAL_PRIMARY/STRUCTURED below.
-  - ling-2.6-flash is the primary cheap cloud (wins 4/5 tasks, $0.000018/call).
+  - deepseek-v4-flash is the primary cheap cloud; Gemini and Ling provide
+    independent-family fallbacks.
   - Cloud API keys are PAYG capacity, not CLI-seat subscriptions. Subscription
     workers belong to cli-orchestration/fusion-local and stay outside this
     advisory transport.

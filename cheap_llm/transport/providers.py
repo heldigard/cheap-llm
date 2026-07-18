@@ -124,17 +124,21 @@ DEEPINFRA_ENDPOINT = _provider_spec("deepinfra").endpoint
 
 
 # Cascade as (model, provider) pairs. For each top model we try OpenRouter
-# first, then ZenMux as backup.
+# first, then ZenMux as backup. 2026-07-15 refresh: DeepSeek V4 Flash is the
+# ZenMux usage leader (matched Opus 4.8 calls per zenmux.ai/token-economics,
+# 2026-06-23) and beats ling-2.6 on quality for the same or lower price;
+# promoted to primary. Gemini 3.1 Flash Lite kept as diversity fallback.
 TOP3_CASCADE: list[tuple[str, str]] = [
-    ("inclusionai/ling-2.6-flash", "openrouter"),
-    ("inclusionai/ling-2.6-flash", "zenmux"),
-    ("inclusionai/ling-2.6-1t", "openrouter"),
-    ("inclusionai/ling-2.6-1t", "zenmux"),
+    ("deepseek/deepseek-v4-flash", "openrouter"),
+    ("deepseek/deepseek-v4-flash", "zenmux"),
     ("google/gemini-3.1-flash-lite", "openrouter"),
     ("google/gemini-3.1-flash-lite", "zenmux"),
+    ("inclusionai/ling-2.6-1t", "openrouter"),
+    ("inclusionai/ling-2.6-1t", "zenmux"),
 ]
 
 LEGACY_CASCADE: list[tuple[str, str]] = [
     ("openai/gpt-5.4-nano", "openrouter"),
-    ("deepseek/deepseek-v4-flash", "openrouter"),
+    ("inclusionai/ling-2.6-flash", "openrouter"),
+    ("inclusionai/ling-2.6-flash", "zenmux"),
 ]
