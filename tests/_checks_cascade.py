@@ -312,6 +312,28 @@ for _bad_timeout in (0, -1, True, float("nan"), float("inf"), -float("inf")):
     except ValueError:
         check(f"reject bad total timeout {_bad_timeout!r}", True)
 
+# ollama is the T1 local lane, not a PAYG cloud provider: naming it as
+# cloud_provider mixes tiers and would leak "local" assumptions onto a cloud
+# boundary. Both the public entry point and the cascade builder reject it.
+try:
+    cl.cheap_complete(
+        system="C.",
+        prompt="x",
+        prefer_local=False,
+        require_json=False,
+        cloud_model="some-model:latest",
+        cloud_provider="ollama",
+    )
+    check("reject ollama as cloud_provider", False, detail="no ValueError")
+except ValueError:
+    check("reject ollama as cloud_provider", True)
+
+try:
+    cl._build_cascade(False, None, "some-model:latest", "ollama")
+    check("reject ollama as cloud_provider in _build_cascade", False, detail="no ValueError")
+except ValueError:
+    check("reject ollama as cloud_provider in _build_cascade", True)
+
 
 # M6: Invalid JSON triggers cascade fallthrough
 def _m6_call(model, provider, sys, prompt, timeout, max_output_tokens, require_json=False):

@@ -79,6 +79,8 @@ def _build_cascade(
             raise ValueError("cloud_provider requires cloud_model")
         if cloud_provider not in _PROVIDERS:
             raise ValueError(f"unknown cloud_provider: {cloud_provider}")
+        if cloud_provider == "ollama":
+            raise ValueError("cloud_provider is a PAYG boundary; use prefer_local for ollama")
         if cloud_provider == "deepseek" and not cloud_model.startswith("deepseek/"):
             raise ValueError("the deepseek provider requires a deepseek/* model")
         cascade.append(("T2", cloud_model, cloud_provider, 18.0))
@@ -276,6 +278,8 @@ def cheap_complete(
     if cloud_provider is not None:
         if not isinstance(cloud_provider, str) or cloud_provider not in _PROVIDERS:
             raise ValueError(f"cloud_provider must be one of: {', '.join(sorted(_PROVIDERS))}")
+        if cloud_provider == "ollama":
+            raise ValueError("cloud_provider is a PAYG boundary; use prefer_local for ollama")
         if not cloud_model:
             raise ValueError("cloud_provider requires cloud_model")
         if cloud_provider == "deepseek" and not cloud_model.startswith("deepseek/"):

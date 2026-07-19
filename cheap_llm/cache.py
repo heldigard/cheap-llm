@@ -31,7 +31,8 @@ def _cache_key(
     h.update(prompt.encode())
     h.update(b"\0")
     if schema:
-        h.update("|".join(schema).encode())
+        # NUL-joined: "|".join would collide ("a|b",) with ("a", "b").
+        h.update("\0".join(schema).encode())
     if max_output_tokens != 1024:
         # Preserve the pre-1.2 cache namespace for the backward-compatible
         # default; only explicitly different budgets need a new namespace.

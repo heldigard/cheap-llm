@@ -248,7 +248,8 @@ def main() -> int:
     )
     p.add_argument(
         "--cloud-provider",
-        choices=sorted(_PROVIDERS),
+        # ollama excluded: cloud_provider is a PAYG boundary (cascade raises ValueError)
+        choices=sorted(pr for pr in _PROVIDERS if pr != "ollama"),
         help="pin the T2 model to exactly one PAYG provider (requires --cloud-model)",
     )
     p.add_argument("--no-json", action="store_true", help="don't require JSON output")

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 __all__ = [  # noqa: F822
     "cheap_complete",
     "scrub_secrets",
@@ -119,8 +119,11 @@ def _complete_result(env: dict) -> dict:
 
     Fills absent keys with ``_RESULT_DEFAULTS``. Mutation is in-place on a
     fresh envelope, so callers can still build partial dicts at each path.
+    Mutable defaults are copied — sharing the module-level ``[]``/``{}``
+    across envelopes would let one consumer's append pollute later results.
     """
     for _k in RESULT_KEYS:
         if _k not in env:
-            env[_k] = _RESULT_DEFAULTS[_k]
+            default = _RESULT_DEFAULTS[_k]
+            env[_k] = default.copy() if isinstance(default, (list, dict)) else default
     return env
