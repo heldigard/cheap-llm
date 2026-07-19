@@ -6,6 +6,9 @@ and JSON contract.
 
 ## Install
 
+> **Ubuntu 26 / PEP 668:** system Python is externally managed. Prefer `uv tool install --force --editable ~/PROJECT` for PATH tools, or `python3 -m pip install --user --break-system-packages -e .` for user-site hooks. Or use a project venv.
+
+
 ```bash
 # Dev install (editable)
 cd ~/cheap-llm && pip install -e .
