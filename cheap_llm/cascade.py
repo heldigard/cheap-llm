@@ -22,11 +22,33 @@ from .transport import (
     DEFAULT_LOCAL_STRUCTURED,
     LEGACY_CASCADE,
     LOCAL_COLD_TIMEOUT,
+    LOCAL_WARM_TIMEOUT_PRIMARY,
+    LOCAL_WARM_TIMEOUT_STRUCTURED,
     TOP3_CASCADE,
     _provider_billing,
     _public_attempt_error,
 )
 from .validation import JSON_HINT, _try_parse_json, _validate
+
+
+def _structured_local_model() -> str:
+    """Resolved structured T1 model (env override or package default)."""
+    return os.environ.get("CHEAP_LLM_LOCAL_STRUCTURED_MODEL") or DEFAULT_LOCAL_STRUCTURED
+
+
+def _local_timeout(model: str) -> float:
+    """Warm/cold T1 budget for *model*. Structured JSON needs more headroom."""
+    # Import at call time so test mocks on cl._ollama_model_loaded take effect.
+    import cheap_llm as _pkg
+
+    warm = (
+        LOCAL_WARM_TIMEOUT_STRUCTURED
+        if model == _structured_local_model()
+        else LOCAL_WARM_TIMEOUT_PRIMARY
+    )
+    if not _pkg._ollama_model_loaded(model):
+        return max(warm, LOCAL_COLD_TIMEOUT)
+    return warm
 
 
 def _build_cascade(
@@ -36,16 +58,10 @@ def _build_cascade(
     cloud_provider: str | None = None,
 ) -> list[tuple[str, str, str, float]]:
     """Build the ordered (tier, model, provider, timeout) cascade."""
-    # Import at call time so test mocks on cl._ollama_model_loaded take effect.
-    import cheap_llm as _pkg
-
     cascade: list[tuple[str, str, str, float]] = []
     if prefer_local:
         resolved = local_model or DEFAULT_LOCAL_PRIMARY
-        local_timeout = 12.0 if resolved == DEFAULT_LOCAL_STRUCTURED else 6.0
-        if not _pkg._ollama_model_loaded(resolved):
-            local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
-        cascade.append(("T1", resolved, "ollama", local_timeout))
+        cascade.append(("T1", resolved, "ollama", _local_timeout(resolved)))
     local_only = os.environ.get("CHEAP_LLM_LOCAL_ONLY", "").strip().lower() in (
         "1",
         "true",
@@ -55,10 +71,7 @@ def _build_cascade(
     if local_only:
         if not cascade:
             resolved = local_model or DEFAULT_LOCAL_PRIMARY
-            local_timeout = 12.0 if resolved == DEFAULT_LOCAL_STRUCTURED else 6.0
-            if not _pkg._ollama_model_loaded(resolved):
-                local_timeout = max(local_timeout, LOCAL_COLD_TIMEOUT)
-            cascade.append(("T1", resolved, "ollama", local_timeout))
+            cascade.append(("T1", resolved, "ollama", _local_timeout(resolved)))
         return cascade
 
     if cloud_provider:
@@ -109,7 +122,7 @@ def _resolve_local_model(
     if local_model:
         return local_model
     if require_json and schema_t:
-        return os.environ.get("CHEAP_LLM_LOCAL_STRUCTURED_MODEL") or DEFAULT_LOCAL_STRUCTURED
+        return _structured_local_model()
     return os.environ.get("CHEAP_LLM_LOCAL_MODEL") or DEFAULT_LOCAL_PRIMARY
 
 

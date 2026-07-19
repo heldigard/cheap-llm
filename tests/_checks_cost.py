@@ -63,6 +63,18 @@ check(
     "ollama receives output budget as num_predict",
     _ollama_payload.get("options", {}).get("num_predict") == 192 and _ol["text"] == "ok",
 )
+# Native-desktop residency: default keep_alive pins the model in VRAM so the
+# next preprocessor slot skips a cold load. CHEAP_LLM_KEEP_ALIVE=0 disables.
+check(
+    "ollama keep_alive defaults to package LOCAL_KEEP_ALIVE",
+    (
+        _ollama_payload.get("keep_alive") == cl.LOCAL_KEEP_ALIVE
+        if cl.LOCAL_KEEP_ALIVE is not None
+        else "keep_alive" not in _ollama_payload
+    ),
+    detail=f"payload keep_alive={_ollama_payload.get('keep_alive')!r} "
+    f"const={cl.LOCAL_KEEP_ALIVE!r}",
+)
 
 # num_ctx must hold the prompt AND generation. A small input + the default
 # output budget must NOT bump num_ctx past the 2048 bracket (no VRAM regression

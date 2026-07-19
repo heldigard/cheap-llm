@@ -88,7 +88,9 @@ cheap-llm --system "X" --prompt "Y" --model my-model:latest  # explicit T1 local
 Env knobs: `OLLAMA_URL` (endpoint override), `CHEAP_LLM_LOCAL_ONLY=1` (never
 call cloud), `CHEAP_LLM_LOCAL_MODEL`/`CHEAP_LLM_LOCAL_STRUCTURED_MODEL`
 (independent T1 overrides), `CHEAP_LLM_LOCAL_COLD_TIMEOUT` (cold-VRAM T1
-budget, default 25s).
+budget, default 25s), `CHEAP_LLM_LOCAL_WARM_TIMEOUT` / `CHEAP_LLM_LOCAL_STRUCTURED_TIMEOUT`
+(warm free-text 8s / structured 18s), `CHEAP_LLM_KEEP_ALIVE` (Ollama residency,
+default `15m`; `0`/`off` disables).
 
 ## Public API contract (SemVer) — ecosystem decoupling
 

@@ -240,9 +240,17 @@ try:
     cl._ollama_model_loaded = lambda m: True
     warm = cl._build_cascade(prefer_local=True, local_model=None, cloud_model=None)
     check(
-        "cascade warm T1: fast budget (6s primary)",
-        warm[0][3] == 6.0,
+        "cascade warm T1: fast budget (primary warm timeout)",
+        warm[0][3] == cl.LOCAL_WARM_TIMEOUT_PRIMARY,
         detail=f"timeout={warm[0][3]}",
+    )
+    warm_struct = cl._build_cascade(
+        prefer_local=True, local_model=cl.DEFAULT_LOCAL_STRUCTURED, cloud_model=None
+    )
+    check(
+        "cascade warm T1: structured budget (schema JSON headroom)",
+        warm_struct[0][3] == cl.LOCAL_WARM_TIMEOUT_STRUCTURED,
+        detail=f"timeout={warm_struct[0][3]}",
     )
 finally:
     cl._ollama_model_loaded = _orig_loaded

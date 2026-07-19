@@ -23,7 +23,7 @@ Cascade (T1 → T2 cloud with cross-provider failover), tried in order,
 first success wins. Build by cheap_complete() from DEFAULT_LOCAL_PRIMARY +
 TOP3_CASCADE + LEGACY_CASCADE (see those constants for the live order):
 
-  T1 LOCAL (free, private)        timeout 6s  — cryptidbleh/gemma4-claude-opus-4.6 for text,
+  T1 LOCAL (free, private)        timeout 8s/18s — cryptidbleh/gemma4-claude-opus-4.6 for text,
                                                     SetneufPT for JSON/schema
   T2 CHEAP CLOUD                  timeout 12s — TOP3_CASCADE:
       deepseek-v4-flash @ openrouter → zenmux
@@ -38,7 +38,7 @@ tiers fail or return invalid output, cheap_complete returns an empty error
 envelope (caller decides what to do, typically fall back to the main model).
 
 Per-call config:
-  - timeout: T1=6s, T2=12s, capped by timeout_total (a deadline, not per-tier)
+  - timeout: T1=8s text / 18s JSON (25s cold), T2=12s; capped by timeout_total
   - JSON contract: caller passes `schema_hint: list[str]`, we validate
   - secret-scrub: ALWAYS applied before any send (local included) — see
     scrub_secrets. Secrets are redacted even on the prefer_local path,
@@ -127,6 +127,9 @@ from .transport import (
     DEFAULT_LOCAL_STRUCTURED,
     LEGACY_CASCADE,
     LOCAL_COLD_TIMEOUT,
+    LOCAL_KEEP_ALIVE,
+    LOCAL_WARM_TIMEOUT_PRIMARY,
+    LOCAL_WARM_TIMEOUT_STRUCTURED,
     MAX_RESPONSE_BYTES,
     MODEL_PRICING,
     OLLAMA_URL,

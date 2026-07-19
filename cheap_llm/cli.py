@@ -20,7 +20,10 @@ from .cascade import _build_cascade, _resolve_local_model, cheap_complete
 from .contract import __version__
 from .transport import (
     _PROVIDERS,
+    DEFAULT_LOCAL_PRIMARY,
+    DEFAULT_LOCAL_STRUCTURED,
     OLLAMA_URL,
+    _normalize_model_name,
     _provider_billing,
     _public_attempt_error,
     _read_json_response,
@@ -72,6 +75,11 @@ def _route_plan(
     for index, (tier, route_model, provider, timeout) in enumerate(cascade, start=1):
         spec = _PROVIDERS.get(provider)
         key_env = spec.endpoint.key_env if spec else None
+        # Local Ollama needs no API key; report ready rather than false-negative.
+        if provider == "ollama":
+            cred_set = True
+        else:
+            cred_set = bool(key_env and os.environ.get(key_env))
         routes.append(
             {
                 "position": index,
@@ -81,7 +89,7 @@ def _route_plan(
                 "timeout": timeout,
                 "billing": _provider_billing(provider),
                 "credential_env": key_env,
-                "credential_set": bool(key_env and os.environ.get(key_env)),
+                "credential_set": cred_set,
             }
         )
     return {
@@ -96,11 +104,29 @@ def _route_plan(
     }
 
 
+def _model_installed(target: str, installed: list[str]) -> bool:
+    """True if *target* appears in Ollama tags (tag-normalized)."""
+    want = _normalize_model_name(target)
+    for name in installed:
+        if _normalize_model_name(name) == want:
+            return True
+    return False
+
+
 def _probe() -> dict:
     """Report what's available right now (key set + per-provider reachability)."""
+    primary = os.environ.get("CHEAP_LLM_LOCAL_MODEL") or DEFAULT_LOCAL_PRIMARY
+    structured = os.environ.get("CHEAP_LLM_LOCAL_STRUCTURED_MODEL") or DEFAULT_LOCAL_STRUCTURED
     out: dict = {
         "ollama_alive": False,
         "local_models": [],
+        "loaded_models": [],
+        "defaults": {
+            "primary": primary,
+            "structured": structured,
+            "primary_installed": False,
+            "structured_installed": False,
+        },
         "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
         "zenmux_key_set": bool(os.environ.get("ZENMUX_API_KEY")),
         "deepseek_key_set": bool(os.environ.get("DEEPSEEK_API_KEY")),
@@ -116,11 +142,29 @@ def _probe() -> dict:
         with urllib.request.urlopen(req, timeout=2) as r:
             data = _read_json_response(r)
         out["ollama_alive"] = True
-        out["local_models"] = [
-            m["name"] for m in data.get("models", []) if "embed" not in m["name"]
-        ]
+        installed = [m["name"] for m in data.get("models", []) if "embed" not in m.get("name", "")]
+        out["local_models"] = installed
+        out["defaults"]["primary_installed"] = _model_installed(primary, installed)
+        out["defaults"]["structured_installed"] = _model_installed(structured, installed)
     except Exception as e:
         out["ollama_error"] = f"{type(e).__name__}: {e}"
+
+    try:
+        req_ps = urllib.request.Request(f"{OLLAMA_URL}/api/ps", method="GET")
+        # nosemgrep — OLLAMA_URL is operator config, not user input
+        with urllib.request.urlopen(req_ps, timeout=1.5) as r:
+            ps = _read_json_response(r)
+        loaded: list[str] = []
+        for m in ps.get("models") or []:
+            if not isinstance(m, dict):
+                continue
+            name = m.get("name") or m.get("model")
+            if name:
+                loaded.append(str(name))
+        out["loaded_models"] = loaded
+    except Exception:
+        # Non-fatal: older Ollama builds or a mid-restart host.
+        out["loaded_models"] = []
 
     for name, spec in _PROVIDERS.items():
         if not spec.probe_url:

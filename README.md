@@ -50,6 +50,9 @@ cheap-llm --system "Classify." --prompt "..." --model my-local-model:latest
 | `CHEAP_LLM_LOCAL_STRUCTURED_MODEL` | Override the JSON/schema Ollama model independently |
 | `CHEAP_LLM_LOCAL_ONLY` | `1/true/yes/on` → T1 only, never call cloud (privacy mode) |
 | `CHEAP_LLM_LOCAL_COLD_TIMEOUT` | T1 budget in seconds when the model is not loaded in VRAM yet (default 25) |
+| `CHEAP_LLM_LOCAL_WARM_TIMEOUT` | Warm free-text T1 budget in seconds (default 8) |
+| `CHEAP_LLM_LOCAL_STRUCTURED_TIMEOUT` | Warm structured/JSON T1 budget in seconds (default 18) |
+| `CHEAP_LLM_KEEP_ALIVE` | Ollama `keep_alive` after each T1 call (default `15m`; `0`/`off` disables) |
 | `OPENROUTER_API_KEY` / `ZENMUX_API_KEY` / `DEEPSEEK_API_KEY` / `DEEPINFRA_API_KEY` | Enable the respective T2 providers |
 
 ## Programmatic usage
@@ -74,7 +77,7 @@ out = cheap_complete(
 
 | Tier | Model | Provider | Cost (per M tokens) | Timeout |
 |------|-------|----------|---------------------|---------|
-| T1 | cryptidbleh/gemma4-claude-opus-4.6 (text) / SetneufPT/Qwopus3.5-4B-Coder-MTP (JSON/schema) | Ollama (local) | $0 | 6s |
+| T1 | cryptidbleh/gemma4-claude-opus-4.6 (text) / SetneufPT/Qwopus3.5-4B-Coder-MTP (JSON/schema) | Ollama (local) | $0 | 8s text / 18s JSON (25s cold) |
 | T2 | deepseek-v4-flash | OpenRouter → ZenMux | $0.098/$0.196 | 12s |
 | T2 | gemini-3.1-flash-lite | OpenRouter → ZenMux | $0.25/$1.50 | 12s |
 | T2 | ling-2.6-1t | OpenRouter → ZenMux | $0.075/$0.625 | 12s |

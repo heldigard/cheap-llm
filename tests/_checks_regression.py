@@ -89,10 +89,40 @@ except Exception as e:  # noqa: BLE001 — the regression under test IS the cras
 finally:
     _restore_call_provider()
 
-# _probe reports every provider key + local_only + cache size
-_probe_keys = set(cl._probe())
-for _pk in ("zenmux_key_set", "deepseek_key_set", "local_only", "cache_entries"):
+# _probe reports every provider key + local_only + cache size + local defaults
+_probe_snapshot = cl._probe()
+_probe_keys = set(_probe_snapshot)
+for _pk in (
+    "zenmux_key_set",
+    "deepseek_key_set",
+    "local_only",
+    "cache_entries",
+    "defaults",
+    "loaded_models",
+):
     check(f"_probe exposes {_pk}", _pk in _probe_keys)
+_defaults = _probe_snapshot.get("defaults") or {}
+check(
+    "_probe defaults names primary + structured models",
+    _defaults.get("primary") == cl.DEFAULT_LOCAL_PRIMARY
+    and _defaults.get("structured") == cl.DEFAULT_LOCAL_STRUCTURED
+    and "primary_installed" in _defaults
+    and "structured_installed" in _defaults,
+    detail=f"defaults={_defaults}",
+)
+check(
+    "_probe loaded_models is a list",
+    isinstance(_probe_snapshot.get("loaded_models"), list),
+    detail=f"loaded={_probe_snapshot.get('loaded_models')!r}",
+)
+# route-plan: local Ollama needs no API key — credential_set must not false-negative
+_route_local = cl._route_plan(prefer_local=True, require_json=False)
+_t1 = next((r for r in _route_local.get("routes", []) if r.get("provider") == "ollama"), None)
+check(
+    "route-plan marks ollama credential_set true (no key required)",
+    _t1 is not None and _t1.get("credential_set") is True and _t1.get("billing") == "local",
+    detail=f"t1={_t1}",
+)
 
 # Provider health probes use authenticated GET, parse a bounded JSON object,
 # and report no credential value.

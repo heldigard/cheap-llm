@@ -16,7 +16,7 @@ import time
 import urllib.request
 from typing import Callable
 
-from .constants import DEEPSEEK_URL, OLLAMA_URL, REASONING_EFFORT_OVERRIDES
+from .constants import DEEPSEEK_URL, LOCAL_KEEP_ALIVE, OLLAMA_URL, REASONING_EFFORT_OVERRIDES
 from .httpio import _normalize_model_name, _read_json_response
 from .pricing import DEEPSEEK_PRICING, _resolve_cost
 from .providers import (
@@ -82,9 +82,10 @@ def _call_ollama(
     max_output_tokens: int = 1024,
     require_json: bool = False,
 ) -> dict:
-    # Smaller ctx for short tasks (faster on 16GB VRAM, where memory bandwidth
-    # is the bottleneck — 9B at q8 leaves little room for big KV cache).
-    # Heuristic: under 4K total input chars → 2048 ctx; else 8192 or 32768 for large tasks.
+    # Smaller ctx for short tasks (faster on 16GB-class VRAM e.g. RTX 5080,
+    # where memory bandwidth is the bottleneck — 9B at q8 leaves little room
+    # for a big KV cache). Heuristic: under 4K total input chars → 2048 ctx;
+    # else 8192 or 32768 for large tasks.
     total = len(system) + len(prompt)
     if total < 4000:
         num_ctx = 2048
@@ -105,7 +106,7 @@ def _call_ollama(
     est_input_tokens = total // 3
     needed = est_input_tokens + max_output_tokens + 256
     num_ctx = max(num_ctx, min(needed, 32768))
-    payload = {
+    payload: dict = {
         "model": model,
         "prompt": prompt,
         "system": system,
@@ -117,6 +118,10 @@ def _call_ollama(
             "num_predict": max_output_tokens,
         },
     }
+    # Pin residency so successive preprocessor slots on a native desktop GPU
+    # skip cold VRAM loads. Disabled when CHEAP_LLM_KEEP_ALIVE=0/off.
+    if LOCAL_KEEP_ALIVE is not None:
+        payload["keep_alive"] = LOCAL_KEEP_ALIVE
     if require_json:
         payload["format"] = "json"
     req = urllib.request.Request(
