@@ -39,6 +39,8 @@ SECRET_PATTERNS = [
     # GitHub tokens: classic (ghp/gho/ghu/ghs/ghr, 36+ payload) + fine-grained PAT
     (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b"), "<REDACTED_GH>"),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"), "<REDACTED_GH>"),
+    # GitLab PAT (glpat-, 20+ payload) — parity with cli-orchestration redaction
+    (re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}"), "<REDACTED_GITLAB>"),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), "<REDACTED_XOX>"),
     # cloud provider keys
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "<REDACTED_AWS>"),  # AWS access-key id

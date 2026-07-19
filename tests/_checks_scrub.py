@@ -45,6 +45,11 @@ SCRUB_CASES = [
         "REDACTED_GH",
     ),
     (
+        "GitLab PAT",
+        "GITLAB_TOKEN=" + synthetic_secret("glpat-", "abcdefghijklmnopqrstuvwx"),
+        "REDACTED_GITLAB",
+    ),
+    (
         "Stripe",
         "stripe: " + synthetic_secret("sk_test_", "51HqabcdefGHIJKLMN0123456789abcd"),
         "REDACTED_STRIPE",
