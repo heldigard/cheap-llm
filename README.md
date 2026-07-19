@@ -93,6 +93,13 @@ Forced judgment models use provider-aware failover: DeepSeek first-party for
 OpenRouter and ZenMux. `cheap-llm` distills/classifies signals; it is not an
 architecture authority, coder, or substitute for the controller brain.
 
+Provider-specific model IDs are normalized only through explicit catalog
+bindings. For example, KAT Coder V2.5 is `kuaishou/kat-coder-*-v2.5` on ZenMux
+but `kwaipilot/kat-coder-*-v2.5` on OpenRouter. These aliases make an explicitly
+pinned model portable across those transports; they do **not** promote KAT,
+Doubao, ERNIE, Grok Build, Step, Hy3, or any other unbenchmarked candidate into
+the default cascade.
+
 All four cloud providers are PAYG routes. A provider API key is not a CLI-seat
 subscription, even when the account currently has granted/promotional balance.
 Subscription-backed workers (`codex-spark`, Antigravity, Kimi, Z.AI) remain in

@@ -47,6 +47,14 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
             provider_label="openrouter",
             extra_headers={"X-OpenRouter-Title": "cheap-llm-cascade"},
         ),
+        # KAT is published under different organization slugs by the two
+        # aggregators. Keep one explicit mapping per wire contract instead of
+        # relying on a heuristic or wasting the first fallback attempt on a
+        # provider-known 404.
+        slug_map={
+            "kuaishou/kat-coder-air-v2.5": "kwaipilot/kat-coder-air-v2.5",
+            "kuaishou/kat-coder-pro-v2.5": "kwaipilot/kat-coder-pro-v2.5",
+        },
         probe_url=f"{OPENROUTER_URL}/models",
     ),
     "zenmux": _ProviderSpec(
@@ -55,6 +63,10 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
             key_env="ZENMUX_API_KEY",
             provider_label="zenmux",
         ),
+        slug_map={
+            "kwaipilot/kat-coder-air-v2.5": "kuaishou/kat-coder-air-v2.5",
+            "kwaipilot/kat-coder-pro-v2.5": "kuaishou/kat-coder-pro-v2.5",
+        },
         probe_url=f"{ZENMUX_URL}/models",
     ),
     "deepinfra": _ProviderSpec(
@@ -67,9 +79,13 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
             "deepseek/deepseek-v4-pro": "deepseek-ai/DeepSeek-V4-Pro",
             "deepseek/deepseek-v4-flash": "deepseek-ai/DeepSeek-V4-Flash",
             "qwen3.7-max": "Qwen/Qwen3.7-Max",
+            "qwen/qwen3.7-max": "Qwen/Qwen3.7-Max",
             "glm-5.2": "zai-org/GLM-5.2",
+            "z-ai/glm-5.2": "zai-org/GLM-5.2",
             "mimo-v2.5-pro": "XiaomiMiMo/MiMo-V2.5-Pro",
+            "xiaomi/mimo-v2.5-pro": "XiaomiMiMo/MiMo-V2.5-Pro",
             "kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
+            "moonshotai/kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
         },
         probe_url=f"{DEEPINFRA_URL}/models",
     ),
@@ -91,13 +107,19 @@ def _provider_spec(name: str) -> _ProviderSpec:
     return spec
 
 
+def _normalize_provider_model(provider: str, model: str) -> str:
+    """Map a canonical/foreign slug to the provider's exact wire id.
+
+    Mappings are explicit provider catalog facts and exact, case-insensitive
+    aliases. A model name that merely contains an alias is left untouched.
+    """
+    spec = _provider_spec(provider)
+    return spec.slug_map.get(model.lower(), model)
+
+
 def _normalize_deepinfra_model(model: str) -> str:
-    """Map generic/OpenRouter model slugs to DeepInfra-specific slugs."""
-    low = model.lower()
-    for needle, slug in _PROVIDERS["deepinfra"].slug_map.items():
-        if needle in low:
-            return slug
-    return model
+    """Backward-compatible DeepInfra-specific normalization helper."""
+    return _normalize_provider_model("deepinfra", model)
 
 
 def _provider_billing(provider: str) -> str:

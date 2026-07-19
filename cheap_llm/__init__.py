@@ -151,6 +151,7 @@ from .transport import (
     _Endpoint,
     _normalize_deepinfra_model,
     _normalize_model_name,
+    _normalize_provider_model,
     _ollama_model_loaded,
     _openai_compat_call,
     _provider_billing,

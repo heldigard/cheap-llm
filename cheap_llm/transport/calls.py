@@ -24,7 +24,7 @@ from .providers import (
     OPENROUTER_ENDPOINT,
     ZENMUX_ENDPOINT,
     _Endpoint,
-    _normalize_deepinfra_model,
+    _normalize_provider_model,
 )
 
 
@@ -163,8 +163,9 @@ def _openai_compat_call(
     api_key = os.environ.get(endpoint.key_env, "")
     if not api_key:
         raise RuntimeError(f"{endpoint.key_env} not set")
+    resolved_model = _normalize_provider_model(endpoint.provider_label, model)
     payload = {
-        "model": model,
+        "model": resolved_model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -173,8 +174,8 @@ def _openai_compat_call(
         "max_tokens": max_output_tokens,
         "stream": False,
     }
-    if model in REASONING_EFFORT_OVERRIDES:
-        payload["reasoning_effort"] = REASONING_EFFORT_OVERRIDES[model]
+    if resolved_model in REASONING_EFFORT_OVERRIDES:
+        payload["reasoning_effort"] = REASONING_EFFORT_OVERRIDES[resolved_model]
     # DeepInfra documents native JSON-object mode and OpenRouter's current
     # catalog advertises response_format for every benchmark-selected model.
     # ZenMux remains prompt-only because its catalog omits parameter support.
@@ -207,7 +208,7 @@ def _openai_compat_call(
         "latency": latency,
         "input_tokens": usage.get("prompt_tokens", 0),
         "output_tokens": usage.get("completion_tokens", 0),
-        "api_cost": _resolve_cost(model, usage, provider=endpoint.provider_label),
+        "api_cost": _resolve_cost(resolved_model, usage, provider=endpoint.provider_label),
         "provider": endpoint.provider_label,
     }
 
@@ -220,10 +221,9 @@ def _call_deepinfra(
     max_output_tokens: int = 1024,
     require_json: bool = False,
 ) -> dict:
-    resolved_model = _normalize_deepinfra_model(model)
     return _openai_compat_call(
         DEEPINFRA_ENDPOINT,
-        resolved_model,
+        model,
         system,
         prompt,
         timeout,

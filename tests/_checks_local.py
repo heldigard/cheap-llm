@@ -88,6 +88,25 @@ check(
     cl._normalize_deepinfra_model("some/other-model") == "some/other-model",
 )
 check(
+    "OpenRouter maps the ZenMux KAT Air organization slug",
+    cl._normalize_provider_model("openrouter", "kuaishou/kat-coder-air-v2.5")
+    == "kwaipilot/kat-coder-air-v2.5",
+)
+check(
+    "ZenMux maps the OpenRouter KAT Pro organization slug",
+    cl._normalize_provider_model("zenmux", "kwaipilot/kat-coder-pro-v2.5")
+    == "kuaishou/kat-coder-pro-v2.5",
+)
+check(
+    "provider model mapping leaves unrelated slugs unchanged",
+    cl._normalize_provider_model("zenmux", "qwen/qwen3.7-max") == "qwen/qwen3.7-max",
+)
+check(
+    "provider model mapping rejects substring collisions",
+    cl._normalize_provider_model("openrouter", "prefix-kuaishou/kat-coder-air-v2.5")
+    == "prefix-kuaishou/kat-coder-air-v2.5",
+)
+check(
     "deepinfra pricing covers every normalized catalog model",
     set(cl._PROVIDERS["deepinfra"].slug_map.values()) <= set(cl.DEEPINFRA_PRICING),
 )
@@ -139,6 +158,58 @@ check(
     "deepinfra fallback cost uses provider-specific listing",
     abs(_di["api_cost"] - ((1_000_000 * 0.09 + 100_000 * 0.18) / 1_000_000)) < 1e-9,
     detail=f"cost={_di['api_cost']}",
+)
+
+# KAT aliases are normalized at the shared OpenAI-compatible boundary, while
+# cost estimation uses the resolved provider wire id.
+_kat_or_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 1_000, "completion_tokens": 100},
+    },
+    _kat_or_payload,
+)
+try:
+    os.environ["OPENROUTER_API_KEY"] = "test-key"
+    _kat_or = cl._call_openrouter(
+        "kuaishou/kat-coder-air-v2.5", "s", "p", timeout=5, require_json=False
+    )
+finally:
+    _urlreq.urlopen = _orig_urlopen
+    os.environ.pop("OPENROUTER_API_KEY", None)
+check(
+    "OpenRouter KAT request uses kwaipilot wire id",
+    _kat_or_payload.get("model") == "kwaipilot/kat-coder-air-v2.5",
+)
+check(
+    "OpenRouter KAT fallback cost is nonzero",
+    _kat_or["api_cost"] is not None and _kat_or["api_cost"] > 0,
+)
+
+_kat_zm_payload: dict = {}
+_urlreq.urlopen = _fake_urlopen_factory(
+    {
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 1_000, "completion_tokens": 100, "cost": None},
+    },
+    _kat_zm_payload,
+)
+try:
+    os.environ["ZENMUX_API_KEY"] = "test-key"
+    _kat_zm = cl._call_zenmux(
+        "kwaipilot/kat-coder-pro-v2.5", "s", "p", timeout=5, require_json=False
+    )
+finally:
+    _urlreq.urlopen = _orig_urlopen
+    os.environ.pop("ZENMUX_API_KEY", None)
+check(
+    "ZenMux KAT request uses kuaishou wire id",
+    _kat_zm_payload.get("model") == "kuaishou/kat-coder-pro-v2.5",
+)
+check(
+    "ZenMux KAT fallback cost is nonzero",
+    _kat_zm["api_cost"] is not None and _kat_zm["api_cost"] > 0,
 )
 
 
