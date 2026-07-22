@@ -282,6 +282,84 @@ check(
     detail=f"hit={_legacy_hit}",
 )
 
+# Model-level reuse is valid across T2 providers, but T1 and T2 are distinct
+# trust/quality lanes. A cached cloud answer must not satisfy local-only, and a
+# cached local answer must not satisfy an explicit cloud-only request.
+_tier_model = "shared-tier-model"
+_tier_key = cl._cache_key(_tier_model, "C.", "tier-boundary", (), 1024)
+_tier_calls: list[str] = []
+
+
+def _tier_boundary_call(
+    model, provider, sys, prompt, timeout, max_output_tokens, require_json=False
+):
+    _tier_calls.append(provider)
+    return _ok(f"live {provider}", provider=provider)
+
+
+cl._call_provider = _tier_boundary_call
+cl._cache_put(
+    _tier_key,
+    {"text": "cached cloud", "provider": "openrouter", "tier": "T2", "billing": "payg"},
+)
+_local_after_cloud_cache = cl.cheap_complete(
+    system="C.",
+    prompt="tier-boundary",
+    prefer_local=True,
+    allow_cloud=False,
+    require_json=False,
+    model=_tier_model,
+)
+check(
+    "local-only rejects a cloud-tier cache entry",
+    _tier_calls == ["ollama"]
+    and _local_after_cloud_cache["provider"] == "ollama"
+    and not _local_after_cloud_cache["cached"],
+    detail=f"calls={_tier_calls} out={_local_after_cloud_cache}",
+)
+
+_tier_calls.clear()
+cl._cache_put(
+    _tier_key,
+    {"text": "spoofed local tier", "provider": "openrouter", "tier": "T1", "billing": "payg"},
+)
+_local_after_mismatched_cache = cl.cheap_complete(
+    system="C.",
+    prompt="tier-boundary",
+    prefer_local=True,
+    allow_cloud=False,
+    require_json=False,
+    model=_tier_model,
+)
+check(
+    "local-only rejects mismatched cache billing provenance",
+    _tier_calls == ["ollama"]
+    and _local_after_mismatched_cache["provider"] == "ollama"
+    and not _local_after_mismatched_cache["cached"],
+    detail=f"calls={_tier_calls} out={_local_after_mismatched_cache}",
+)
+
+_tier_calls.clear()
+cl._cache_put(
+    _tier_key,
+    {"text": "cached local", "provider": "ollama", "tier": "T1", "billing": "local"},
+)
+_cloud_after_local_cache = cl.cheap_complete(
+    system="C.",
+    prompt="tier-boundary",
+    prefer_local=False,
+    require_json=False,
+    cloud_model=_tier_model,
+)
+check(
+    "cloud-only rejects a local-tier cache entry",
+    _tier_calls == ["openrouter"]
+    and _cloud_after_local_cache["provider"] == "openrouter"
+    and not _cloud_after_local_cache["cached"],
+    detail=f"calls={_tier_calls} out={_cloud_after_local_cache}",
+)
+_restore_call_provider()
+
 # Bad budgets fail before transport/cache work and cannot silently request an
 # unbounded or nonsensical generation.
 for _bad_budget in (0, -1, True, 1.5):
@@ -311,6 +389,57 @@ for _bad_timeout in (0, -1, True, float("nan"), float("inf"), -float("inf")):
         check(f"reject bad total timeout {_bad_timeout!r}", False, detail="no ValueError")
     except ValueError:
         check(f"reject bad total timeout {_bad_timeout!r}", True)
+
+for _bad_cloud_policy in (None, 0, 1, "false"):
+    try:
+        cl.cheap_complete(
+            system="C.",
+            prompt="x",
+            allow_cloud=_bad_cloud_policy,  # type: ignore[arg-type]
+        )
+        check(f"reject bad cloud policy {_bad_cloud_policy!r}", False, detail="no ValueError")
+    except ValueError:
+        check(f"reject bad cloud policy {_bad_cloud_policy!r}", True)
+
+try:
+    cl.cheap_complete(
+        system="C.",
+        prompt="x",
+        prefer_local=False,
+        allow_cloud=False,
+    )
+    check("reject completion with no enabled lane", False, detail="no ValueError")
+except ValueError:
+    check("reject completion with no enabled lane", True)
+
+
+_local_only_calls: list[str] = []
+
+
+def _local_only_failure(
+    model, provider, sys, prompt, timeout, max_output_tokens, require_json=False
+):
+    _local_only_calls.append(provider)
+    raise RuntimeError("expected local failure")
+
+
+cl._call_provider = _local_only_failure
+shutil.rmtree(cache_dir, ignore_errors=True)
+_local_only_result = cl.cheap_complete(
+    system="C.",
+    prompt="x",
+    prefer_local=True,
+    allow_cloud=False,
+    require_json=False,
+)
+check(
+    "allow_cloud=False never reaches a PAYG provider after local failure",
+    _local_only_calls == ["ollama"]
+    and len(_local_only_result["attempts"]) == 1
+    and _local_only_result["provider"] is None,
+    detail=f"calls={_local_only_calls} result={_local_only_result}",
+)
+_restore_call_provider()
 
 # ollama is the T1 local lane, not a PAYG cloud provider: naming it as
 # cloud_provider mixes tiers and would leak "local" assumptions onto a cloud

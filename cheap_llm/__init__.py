@@ -44,7 +44,8 @@ Per-call config:
     scrub_secrets. Secrets are redacted even on the prefer_local path,
     because T1 frequently times out and the same prompt then reaches cloud.
   - cache: sha256 of model|effective_system|prompt|schema, per-MODEL (not
-    per-provider), so a ZenMux failover after an OpenRouter miss can reuse it
+    per-provider), but reusable only within its recorded tier so cached cloud
+    output cannot satisfy a local-only request (or the reverse)
 
 Usage (programmatic):
     from cheap_llm import cheap_complete

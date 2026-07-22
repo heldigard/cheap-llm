@@ -121,6 +121,11 @@ import cheap_llm
 cheap_llm.require("1.2")          # needed when using max_output_tokens
 out = cheap_llm.cheap_complete(system=..., prompt=..., max_output_tokens=256)
 ```
+
+Consumers that own a strict spend boundary pass `allow_cloud=False` together
+with `prefer_local=True`. This is an invocation-scoped guarantee; the default
+remains `True` for backward compatibility, while `CHEAP_LLM_LOCAL_ONLY=1`
+continues to provide the process-wide emergency policy.
 `fusion` already adopts this (`judge.py::_CHEAP_LLM_MIN_VERSION`). The 7
 `~/.claude/scripts` consumers + web-research can adopt incrementally — the
 contract + test prevent silent breaks meanwhile.

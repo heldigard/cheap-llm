@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-__version__ = "1.3.4"
+__version__ = "1.4.0"
 __all__ = [  # noqa: F822
     "cheap_complete",
     "scrub_secrets",
@@ -54,6 +54,7 @@ CHEAP_COMPLETE_PARAMS: tuple[str, ...] = (
     "cloud_model",
     "max_output_tokens",
     "cloud_provider",
+    "allow_cloud",
 )
 
 CONTRACT: dict[str, object] = {

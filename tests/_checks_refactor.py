@@ -138,6 +138,18 @@ check(
     all(route[2] != "deepinfra" for route in cascade_default),
 )
 
+local_only_by_contract = cl._build_cascade(
+    prefer_local=True,
+    local_model=None,
+    cloud_model="deepseek/deepseek-v4-flash",
+    allow_cloud=False,
+)
+check(
+    "allow_cloud=False keeps the cascade local-only",
+    len(local_only_by_contract) == 1 and local_only_by_contract[0][2] == "ollama",
+    detail=f"routes={local_only_by_contract}",
+)
+
 _old_deepinfra_key = os.environ.get("DEEPINFRA_API_KEY")
 try:
     os.environ["DEEPINFRA_API_KEY"] = "test-key"

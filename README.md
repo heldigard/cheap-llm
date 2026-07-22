@@ -76,6 +76,10 @@ out = cheap_complete(
 # out: {text, model, provider, billing, tier, latency, cost, ...}
 ```
 
+Set `allow_cloud=False` when a caller needs a hard local-only boundary that
+does not depend on process-wide environment state. It requires
+`prefer_local=True`; the default remains `True` for backward compatibility.
+
 ## Cascade
 
 | Tier | Model | Provider | Cost (per M tokens) | Timeout |
@@ -134,8 +138,9 @@ responses independently of the requested token budget.
 `timeout_total` must be a positive finite number. Invalid deadlines fail
 before Ollama probing, cache access, or provider calls. Cache files are written
 atomically with private permissions; new entries retain the source provider
-and tier so cross-provider cache hits keep accurate telemetry. Existing
-text-only cache entries remain compatible.
+and tier so cross-provider cache hits keep accurate telemetry. Reuse is limited
+to the same tier: T1 local and T2 cloud never satisfy one another from cache.
+Existing text-only cache entries remain compatible and inherit the lookup tier.
 
 ## Testing
 

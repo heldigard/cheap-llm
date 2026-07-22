@@ -1,7 +1,9 @@
 """Disk cache — atomic writes, LRU pruning, per-model keys.
 
 Cache is keyed per-MODEL (not per-provider): a ZenMux failover after an
-OpenRouter miss reuses the same answer, saving cost.
+OpenRouter miss reuses the same answer, saving cost. The cascade validates
+stored tier provenance before reuse, so provider sharing never crosses the
+T1-local/T2-cloud boundary.
 """
 
 from __future__ import annotations

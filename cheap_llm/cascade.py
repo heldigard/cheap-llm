@@ -1,4 +1,5 @@
-# vs-soft-allow — cheap_complete 9 params = documented public API contract (CHEAP_COMPLETE_PARAMS);
+# vs-soft-allow — cheap_complete parameters are a documented public API contract
+# (CHEAP_COMPLETE_PARAMS); additive policy knobs keep backward compatibility.
 # internal helpers (_try_cache_hit, _try_live_hit) pass through cascade context from cheap_complete.
 """Main cascade — build cascade, resolve models, try hits, cheap_complete.
 
@@ -56,8 +57,13 @@ def _build_cascade(
     local_model: str | None,
     cloud_model: str | None,
     cloud_provider: str | None = None,
+    allow_cloud: bool = True,
 ) -> list[tuple[str, str, str, float]]:
     """Build the ordered (tier, model, provider, timeout) cascade."""
+    if not isinstance(allow_cloud, bool):
+        raise ValueError("allow_cloud must be a boolean")
+    if not prefer_local and not allow_cloud:
+        raise ValueError("allow_cloud=False requires prefer_local=True")
     cascade: list[tuple[str, str, str, float]] = []
     if prefer_local:
         resolved = local_model or DEFAULT_LOCAL_PRIMARY
@@ -68,7 +74,7 @@ def _build_cascade(
         "yes",
         "on",
     )
-    if local_only:
+    if local_only or not allow_cloud:
         if not cascade:
             resolved = local_model or DEFAULT_LOCAL_PRIMARY
             cascade.append(("T1", resolved, "ollama", _local_timeout(resolved)))
@@ -148,9 +154,19 @@ def _try_cache_hit(
     source_tier = cached.get("tier")
     if not isinstance(source_tier, str) or not source_tier:
         source_tier = tier
+    # Cache entries are shared across providers within one tier, but never
+    # across the local/cloud trust boundary. Otherwise a local-only call could
+    # return a T2 result when the same model id had previously been used in the
+    # cloud, or an explicit cloud-only call could silently reuse weaker T1
+    # output. Legacy entries without provenance inherit the lookup tier above.
+    if source_tier != tier:
+        return None
     source_billing = cached.get("billing")
     if source_billing not in {"local", "payg"}:
         source_billing = _provider_billing(source_provider)
+    expected_billing = "local" if tier == "T1" else "payg"
+    if source_billing != expected_billing:
+        return None
     attempt = {
         "tier": source_tier,
         "model": model,
@@ -165,8 +181,6 @@ def _try_cache_hit(
     }
     if source_provider != provider:
         attempt["cache_lookup_provider"] = provider
-    if source_tier != tier:
-        attempt["cache_lookup_tier"] = tier
     attempts.append(attempt)
     text = cached["text"]
     parsed = _try_parse_json(text) if require_json else None
@@ -252,6 +266,7 @@ def cheap_complete(
     cloud_model: str | None = None,
     max_output_tokens: int = 1024,
     cloud_provider: str | None = None,
+    allow_cloud: bool = True,
 ) -> dict:
     """Try T1 local, then T2 cloud, return the first good result.
 
@@ -275,6 +290,10 @@ def cheap_complete(
         or timeout_total <= 0
     ):
         raise ValueError("timeout_total must be a positive finite number")
+    if not isinstance(allow_cloud, bool):
+        raise ValueError("allow_cloud must be a boolean")
+    if not prefer_local and not allow_cloud:
+        raise ValueError("allow_cloud=False requires prefer_local=True")
     if cloud_provider is not None:
         if not isinstance(cloud_provider, str) or cloud_provider not in _PROVIDERS:
             raise ValueError(f"cloud_provider must be one of: {', '.join(sorted(_PROVIDERS))}")
@@ -296,7 +315,13 @@ def cheap_complete(
             eff_system += f" Required keys: {list(schema_t)}."
 
     local_model = _resolve_local_model(model, require_json, schema_t)
-    cascade = _build_cascade(prefer_local, local_model, cloud_model, cloud_provider)
+    cascade = _build_cascade(
+        prefer_local,
+        local_model,
+        cloud_model,
+        cloud_provider,
+        allow_cloud=allow_cloud,
+    )
     attempts: list[dict] = []
     deadline = time.perf_counter() + float(timeout_total)
 
