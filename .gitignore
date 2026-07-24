@@ -17,3 +17,5 @@ _e2e_*
 .memory-bank/agent-sessions.md
 .memory-bank/topics/agent-sessions.md
 .memory-bank/blocked-writes.log
+.coverage
+.claude/orchestration/
