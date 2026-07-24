@@ -14,7 +14,7 @@ import os
 import re
 import time
 import urllib.request
-from typing import Callable
+from collections.abc import Callable
 
 from .constants import DEEPSEEK_URL, LOCAL_KEEP_ALIVE, OLLAMA_URL, REASONING_EFFORT_OVERRIDES
 from .httpio import _normalize_model_name, _read_json_response
@@ -333,7 +333,7 @@ def _call_deepseek(
 
 
 # Dispatch table: provider label -> call function.
-_PROVIDER_DISPATCH: dict[str, "Callable[..., dict]"] = {
+_PROVIDER_DISPATCH: dict[str, Callable[..., dict]] = {
     "ollama": _call_ollama,
     "openrouter": _call_openrouter,
     "zenmux": _call_zenmux,

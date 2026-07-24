@@ -118,7 +118,8 @@ project evolves without silently breaking fusion / web-research / the 7
 **Consumer adoption** (opt-in, backward compatible):
 ```python
 import cheap_llm
-cheap_llm.require("1.2")          # needed when using max_output_tokens
+
+cheap_llm.require("1.2")  # needed when using max_output_tokens
 out = cheap_llm.cheap_complete(system=..., prompt=..., max_output_tokens=256)
 ```
 

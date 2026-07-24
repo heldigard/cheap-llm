@@ -172,10 +172,11 @@ project evolves without silently breaking fusion / web-research / the 7
 
 ```python
 import cheap_llm
-cheap_llm.require("1.2")                      # needed for max_output_tokens
+
+cheap_llm.require("1.2")  # needed for max_output_tokens
 out = cheap_llm.cheap_complete(system=..., prompt=..., max_output_tokens=256)
 
-cheap_llm.require("1.3")                      # needed for cloud_provider
+cheap_llm.require("1.3")  # needed for cloud_provider
 ```
 
 ## Consumers

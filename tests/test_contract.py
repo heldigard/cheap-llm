@@ -19,8 +19,9 @@ from __future__ import annotations
 import inspect
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # Resolve the real module regardless of cwd (mirrors the consumer bootstrap).
 _PROJECT = Path(__file__).resolve().parents[1]
